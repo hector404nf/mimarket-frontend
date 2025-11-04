@@ -4,37 +4,81 @@ import type React from "react"
 
 import { useState } from "react"
 import Link from "next/link"
-import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Phone } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Phone, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { useAuth } from "@/contexts/auth-context"
+import { toast } from "sonner"
 
 export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
+    apellido: "",
     email: "",
-    phone: "",
+    telefono: "",
     password: "",
     confirmPassword: "",
     acceptTerms: false,
-  })
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  
+  const { register, isAuthenticated } = useAuth()
+  const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Redirigir si ya está autenticado
+  if (isAuthenticated) {
+    router.push('/')
+    return null
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
     if (formData.password !== formData.confirmPassword) {
-      alert("Las contraseñas no coinciden")
+      toast.error("Las contraseñas no coinciden")
       return
     }
     if (!formData.acceptTerms) {
-      alert("Debes aceptar los términos y condiciones")
+      toast.error("Debes aceptar los términos y condiciones")
       return
     }
-    console.log("Register attempt:", formData)
-    // Aquí irá la lógica de registro
+
+    setIsSubmitting(true)
+
+    try {
+      const response = await register({
+        name: formData.name,
+        apellido: formData.apellido,
+        email: formData.email,
+        password: formData.password,
+        password_confirmation: formData.confirmPassword,
+        telefono: formData.telefono || undefined,
+      })
+
+      if (response.success) {
+        toast.success(response.message || 'Registro exitoso')
+        router.push('/onboarding')
+      } else {
+        if (response.errors) {
+          // Mostrar errores de validación específicos
+          Object.values(response.errors).flat().forEach((error: any) => {
+            toast.error(error)
+          })
+        } else {
+          toast.error(response.message || 'Error al registrarse')
+        }
+      }
+    } catch (error) {
+      toast.error('Error de conexión. Intenta nuevamente.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -61,22 +105,43 @@ export default function RegisterPage() {
 
           <CardContent className="space-y-6">
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name" className="text-sm font-medium text-gray-700">
-                  Nombre Completo
-                </Label>
-                <div className="relative">
-                  <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                  <Input
-                    id="name"
-                    name="name"
-                    type="text"
-                    placeholder="Tu nombre completo"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    className="pl-10 h-12 border-gray-200 focus:border-green-500 focus:ring-green-500"
-                    required
-                  />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name" className="text-sm font-medium text-gray-700">
+                    Nombre
+                  </Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                    <Input
+                      id="name"
+                      name="name"
+                      type="text"
+                      placeholder="Juan"
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      className="pl-10 h-12 border-gray-200 focus:border-green-500 focus:ring-green-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="apellido" className="text-sm font-medium text-gray-700">
+                    Apellido
+                  </Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                    <Input
+                      id="apellido"
+                      name="apellido"
+                      type="text"
+                      placeholder="Pérez"
+                      value={formData.apellido}
+                      onChange={handleInputChange}
+                      className="pl-10 h-12 border-gray-200 focus:border-green-500 focus:ring-green-500"
+                      required
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -100,20 +165,19 @@ export default function RegisterPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="phone" className="text-sm font-medium text-gray-700">
-                  Teléfono
+                <Label htmlFor="telefono" className="text-sm font-medium text-gray-700">
+                  Teléfono (opcional)
                 </Label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
-                    id="phone"
-                    name="phone"
+                    id="telefono"
+                    name="telefono"
                     type="tel"
-                    placeholder="+1 234 567 8900"
-                    value={formData.phone}
+                    placeholder="+1 (555) 000-0000"
+                    value={formData.telefono}
                     onChange={handleInputChange}
                     className="pl-10 h-12 border-gray-200 focus:border-green-500 focus:ring-green-500"
-                    required
                   />
                 </div>
               </div>
@@ -192,10 +256,20 @@ export default function RegisterPage() {
 
               <Button
                 type="submit"
-                className="w-full h-12 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white font-medium transition-all duration-200 transform hover:scale-[1.02]"
+                disabled={isSubmitting}
+                className="w-full h-12 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white font-medium transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
-                Crear Cuenta
-                <ArrowRight className="ml-2 h-4 w-4" />
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creando cuenta...
+                  </>
+                ) : (
+                  <>
+                    Crear Cuenta
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
               </Button>
             </form>
           </CardContent>

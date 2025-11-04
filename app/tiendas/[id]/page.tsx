@@ -15,6 +15,7 @@ import ReviewsSection from "@/components/reviews-section"
 import { useBehaviorTracking } from "@/hooks/use-behavior-tracking"
 import RecommendationsSection from "@/components/recommendations-section"
 import { formatearPrecioParaguayo } from "@/lib/utils"
+import { CategoryIcon } from "@/lib/category-icons"
 
 export default function TiendaPage({ params }: { params: { id: string } }) {
   const { trackStoreView } = useBehaviorTracking()
@@ -82,7 +83,12 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
 
               <div className="flex flex-wrap gap-2">
                 {tienda.categorias.map((categoria) => (
-                  <Badge key={categoria} variant="secondary">
+                  <Badge key={categoria} variant="secondary" className="flex items-center gap-1">
+                    <CategoryIcon 
+                      categorySlug={categoria.toLowerCase().replace(/\s+/g, '')} 
+                      categoryName={categoria}
+                      className="h-3 w-3"
+                    />
                     {categoria}
                   </Badge>
                 ))}
@@ -95,8 +101,8 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                     {productosTienda.map((producto) => (
                       <Link
-                        key={producto.id}
-                        href={`/productos/${producto.id}`}
+                        key={producto.id_producto}
+                        href={`/productos/${producto.id_producto}`}
                         className="group border rounded-lg overflow-hidden hover:shadow-md transition-shadow"
                       >
                         <div className="aspect-square relative bg-muted">

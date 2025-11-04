@@ -4,12 +4,15 @@ import type React from "react"
 
 import { useState } from "react"
 import Link from "next/link"
-import { Eye, EyeOff, Mail, Lock, ArrowRight } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Eye, EyeOff, Mail, Lock, ArrowRight, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { useAuth } from "@/contexts/auth-context"
+import { toast } from "sonner"
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
@@ -18,11 +21,38 @@ export default function LoginPage() {
     password: "",
     remember: false,
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  
+  const { login, isAuthenticated } = useAuth()
+  const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Redirigir si ya está autenticado
+  if (isAuthenticated) {
+    router.push('/')
+    return null
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log("Login attempt:", formData)
-    // Aquí irá la lógica de autenticación
+    setIsSubmitting(true)
+
+    try {
+      const response = await login({
+        email: formData.email,
+        password: formData.password,
+      })
+
+      if (response.success) {
+        toast.success(response.message || 'Inicio de sesión exitoso')
+        router.push('/')
+      } else {
+        toast.error(response.message || 'Error al iniciar sesión')
+      }
+    } catch (error) {
+      toast.error('Error de conexión. Intenta nuevamente.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,6 +118,7 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 transition-colors"
+                    aria-label={showPassword ? "ocultar contraseña" : "mostrar contraseña"}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -116,10 +147,20 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full h-12 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium transition-all duration-200 transform hover:scale-[1.02]"
+                disabled={isSubmitting}
+                className="w-full h-12 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
-                Iniciar Sesión
-                <ArrowRight className="ml-2 h-4 w-4" />
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Iniciando sesión...
+                  </>
+                ) : (
+                  <>
+                    Iniciar Sesión
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
               </Button>
             </form>
           </CardContent>
@@ -166,7 +207,7 @@ export default function LoginPage() {
 
             <p className="text-center text-sm text-gray-600">
               ¿No tienes una cuenta?{" "}
-              <Link href="/registro" className="font-medium text-blue-600 hover:text-blue-800 transition-colors">
+              <Link href="/onboarding" className="font-medium text-blue-600 hover:text-blue-800 transition-colors">
                 Regístrate aquí
               </Link>
             </p>

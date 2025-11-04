@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { ArrowLeft, Search, Plus, Edit, Trash2, Eye, Package, ChevronLeft, ChevronRight } from "lucide-react"
@@ -10,20 +10,21 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { productos } from "@/lib/data"
+import { useProfileType } from "@/hooks/use-profile-type"
+import { useProductosByTienda } from "@/hooks/useProductos"
 
 export default function ProductosTiendaPage() {
   const [busqueda, setBusqueda] = useState("")
   const [imagenesActuales, setImagenesActuales] = useState<{ [key: number]: number }>({})
+  const { storeInfo } = useProfileType()
+  const tiendaId = storeInfo?.id || 0
+  const { productos, loading, error, pagination, refetch } = useProductosByTienda(tiendaId, { per_page: 12 })
 
-  // Filtrar productos de la tienda (simulamos que es tienda ID 1)
-  const productostienda = productos.filter((p) => p.tiendaId === 1)
-
-  const productosFiltrados = productostienda.filter(
-    (producto) =>
-      producto.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-      producto.categoria.toLowerCase().includes(busqueda.toLowerCase()),
-  )
+  useEffect(() => {
+    if (tiendaId) {
+      refetch({ search: busqueda })
+    }
+  }, [busqueda, tiendaId])
 
   const getTipoVentaBadge = (tipoVenta: string) => {
     switch (tipoVenta) {
@@ -60,13 +61,31 @@ export default function ProductosTiendaPage() {
   }
 
   const getImagenPrincipal = (producto: any) => {
-    const imagenes = producto.imagenes || (producto.imagen ? [producto.imagen] : [])
-    const imagenActual = imagenesActuales[producto.id] || 0
-    return imagenes[imagenActual] || "/placeholder.svg"
+    const todasLasImagenes = getImagenes(producto)
+    const key = producto.id_producto || producto.id
+    const imagenActual = imagenesActuales[key] || 0
+    return todasLasImagenes[imagenActual] || "/placeholder.svg"
   }
 
   const getImagenes = (producto: any) => {
-    return producto.imagenes || (producto.imagen ? [producto.imagen] : [])
+    const imagenes: string[] = []
+
+    if (Array.isArray(producto.imagenes) && producto.imagenes.length > 0) {
+      imagenes.push(...producto.imagenes)
+    } else if (producto.imagen) {
+      imagenes.push(producto.imagen)
+    }
+
+    if (producto.imagen_principal) {
+      imagenes.unshift(producto.imagen_principal)
+    }
+    if (producto.imagenes_adicionales && Array.isArray(producto.imagenes_adicionales)) {
+      producto.imagenes_adicionales.forEach((img: any) => {
+        if (img?.url) imagenes.push(img.url)
+      })
+    }
+
+    return imagenes.length > 0 ? imagenes : ["/placeholder.svg"]
   }
 
   const cambiarImagen = (productoId: number, direccion: "siguiente" | "anterior", imagenes: string[]) => {
@@ -120,7 +139,7 @@ export default function ProductosTiendaPage() {
                   <Package className="h-4 w-4 text-blue-600" />
                   <span className="text-sm font-medium">Total Productos</span>
                 </div>
-                <p className="text-xl md:text-2xl font-bold mt-1">{productostienda.length}</p>
+                <p className="text-xl md:text-2xl font-bold mt-1">{productos.length}</p>
               </CardContent>
             </Card>
 
@@ -131,7 +150,7 @@ export default function ProductosTiendaPage() {
                   <span className="text-sm font-medium">En Stock</span>
                 </div>
                 <p className="text-xl md:text-2xl font-bold mt-1">
-                  {productostienda.filter((p) => p.stock > 0 || p.tipoVenta === "delivery").length}
+                  {productos.filter((p: any) => p.stock > 0 || p.tipoVenta === "delivery").length}
                 </p>
               </CardContent>
             </Card>
@@ -143,7 +162,7 @@ export default function ProductosTiendaPage() {
                   <span className="text-sm font-medium">Stock Bajo</span>
                 </div>
                 <p className="text-xl md:text-2xl font-bold mt-1">
-                  {productostienda.filter((p) => p.stock > 0 && p.stock < 5 && p.tipoVenta !== "delivery").length}
+                  {productos.filter((p: any) => p.stock > 0 && p.stock < 5 && p.tipoVenta !== "delivery").length}
                 </p>
               </CardContent>
             </Card>
@@ -155,7 +174,7 @@ export default function ProductosTiendaPage() {
                   <span className="text-sm font-medium">Sin Stock</span>
                 </div>
                 <p className="text-xl md:text-2xl font-bold mt-1">
-                  {productostienda.filter((p) => p.stock === 0 && p.tipoVenta !== "delivery").length}
+                  {productos.filter((p: any) => p.stock === 0 && p.tipoVenta !== "delivery").length}
                 </p>
               </CardContent>
             </Card>
@@ -179,16 +198,18 @@ export default function ProductosTiendaPage() {
           {/* Lista de productos */}
           <Card>
             <CardHeader>
-              <CardTitle>Productos ({productosFiltrados.length})</CardTitle>
+              <CardTitle>Productos ({productos.length})</CardTitle>
             </CardHeader>
             <CardContent>
+              {error && <div className="text-red-600 mb-4">{error}</div>}
+              {loading && <div className="text-muted-foreground mb-4">Cargando productos...</div>}
               <div className="space-y-4">
-                {productosFiltrados.map((producto) => {
+                {productos.map((producto: any) => {
                   const imagenes = getImagenes(producto)
                   const tieneMultiplesImagenes = imagenes.length > 1
 
                   return (
-                    <div key={producto.id} className="border rounded-lg p-4">
+                    <div key={producto.id_producto || producto.id} className="border rounded-lg p-4">
                       <div className="flex flex-col lg:flex-row gap-4">
                         {/* Imagen del producto con navegación */}
                         <div className="relative h-20 w-20 lg:h-24 lg:w-24 flex-shrink-0 mx-auto lg:mx-0">
@@ -206,7 +227,7 @@ export default function ProductosTiendaPage() {
                                 variant="secondary"
                                 size="icon"
                                 className="absolute -left-2 top-1/2 transform -translate-y-1/2 h-6 w-6 bg-white/80 hover:bg-white/90"
-                                onClick={() => cambiarImagen(producto.id, "anterior", imagenes)}
+                                onClick={() => cambiarImagen(producto.id_producto || producto.id, "anterior", imagenes)}
                               >
                                 <ChevronLeft className="h-3 w-3" />
                               </Button>
@@ -214,14 +235,14 @@ export default function ProductosTiendaPage() {
                                 variant="secondary"
                                 size="icon"
                                 className="absolute -right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 bg-white/80 hover:bg-white/90"
-                                onClick={() => cambiarImagen(producto.id, "siguiente", imagenes)}
+                                onClick={() => cambiarImagen(producto.id_producto || producto.id, "siguiente", imagenes)}
                               >
                                 <ChevronRight className="h-3 w-3" />
                               </Button>
 
                               {/* Indicador de imagen */}
                               <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 bg-black/70 text-white text-xs px-1 rounded">
-                                {(imagenesActuales[producto.id] || 0) + 1}/{imagenes.length}
+                                {(imagenesActuales[producto.id_producto || producto.id] || 0) + 1}/{imagenes.length}
                               </div>
                             </>
                           )}
@@ -267,7 +288,7 @@ export default function ProductosTiendaPage() {
                                 asChild
                                 className="flex-1 lg:flex-none bg-transparent"
                               >
-                                <Link href={`/productos/${producto.id}`}>
+                                <Link href={`/productos/${producto.id_producto || producto.id}`}>
                                   <Eye className="h-4 w-4 mr-1" />
                                   <span className="hidden sm:inline">Ver</span>
                                 </Link>
@@ -295,7 +316,7 @@ export default function ProductosTiendaPage() {
                 })}
               </div>
 
-              {productosFiltrados.length === 0 && (
+              {!loading && productos.length === 0 && (
                 <div className="text-center py-8">
                   <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <p className="text-muted-foreground">No se encontraron productos</p>

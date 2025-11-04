@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { categorias as categoriasData, marcas as marcasData } from "@/lib/data"
+import { CategoryIcon, categoriesWithIcons } from "@/lib/category-icons"
 
 export default function ProductFilters() {
   const router = useRouter()
@@ -184,14 +185,21 @@ export default function ProductFilters() {
           <AccordionTrigger>Categorías</AccordionTrigger>
           <AccordionContent>
             <div className="space-y-2">
-              {categoriasData.map((categoria) => (
-                <div key={categoria} className="flex items-center space-x-2">
+              {categoriesWithIcons.map((categoria) => (
+                <div key={categoria.slug} className="flex items-center space-x-2">
                   <Checkbox
-                    id={`categoria-${categoria}`}
-                    checked={categorias.includes(categoria)}
-                    onCheckedChange={() => toggleCategoria(categoria)}
+                    id={`categoria-${categoria.slug}`}
+                    checked={categorias.includes(categoria.name)}
+                    onCheckedChange={() => toggleCategoria(categoria.name)}
                   />
-                  <Label htmlFor={`categoria-${categoria}`}>{categoria}</Label>
+                  <Label htmlFor={`categoria-${categoria.slug}`} className="flex items-center gap-2 cursor-pointer">
+                    <CategoryIcon 
+                      categorySlug={categoria.slug} 
+                      categoryName={categoria.name}
+                      className="h-4 w-4"
+                    />
+                    {categoria.name}
+                  </Label>
                 </div>
               ))}
             </div>

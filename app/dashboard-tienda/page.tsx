@@ -13,6 +13,7 @@ import {
   Plus,
   BarChart3,
   Settings,
+  Bell,
 } from "lucide-react"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge"
 import { formatearPrecioParaguayo } from "@/lib/utils"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
+import { useStoreAccess, useProfileType } from "@/hooks/use-profile-type"
 
 // Datos simulados para el dashboard
 const dashboardData = {
@@ -84,15 +86,8 @@ const dashboardData = {
 }
 
 export default function DashboardTiendaPage() {
-  const [userProfile, setUserProfile] = useState<any>(null)
-
-  useEffect(() => {
-    // Cargar perfil del usuario
-    const profile = localStorage.getItem("userProfile")
-    if (profile) {
-      setUserProfile(JSON.parse(profile))
-    }
-  }, [])
+  const { canAccessStoreDashboard } = useStoreAccess()
+  const { storeInfo, isStoreOwner } = useProfileType()
 
   const getEstadoBadge = (estado: string) => {
     switch (estado) {
@@ -109,7 +104,7 @@ export default function DashboardTiendaPage() {
     }
   }
 
-  if (!userProfile || userProfile.type !== "store") {
+  if (!canAccessStoreDashboard) {
     return (
       <div className="flex min-h-screen flex-col">
         <Navbar />
@@ -135,7 +130,7 @@ export default function DashboardTiendaPage() {
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Dashboard - {userProfile.storeInfo.storeName}</h1>
+              <h1 className="text-3xl font-bold mb-2">Dashboard - {storeInfo?.nombre}</h1>
               <p className="text-muted-foreground">Gestiona tu tienda y supervisa tus ventas</p>
             </div>
             <div className="flex gap-2 mt-4 md:mt-0">
@@ -373,16 +368,16 @@ export default function DashboardTiendaPage() {
               </Button>
 
               <Button asChild variant="outline" className="h-auto p-6 flex-col">
-                <Link href="/dashboard-tienda/clientes">
-                  <Users className="h-8 w-8 mb-2" />
-                  <span>Gestionar Clientes</span>
+                <Link href="/dashboard-tienda/notificaciones">
+                  <Bell className="h-8 w-8 mb-2" />
+                  <span>Notificaciones</span>
                 </Link>
               </Button>
 
               <Button asChild variant="outline" className="h-auto p-6 flex-col">
-                <Link href="/dashboard-tienda/reportes">
-                  <BarChart3 className="h-8 w-8 mb-2" />
-                  <span>Ver Reportes</span>
+                <Link href="/dashboard-tienda/clientes">
+                  <Users className="h-8 w-8 mb-2" />
+                  <span>Gestionar Clientes</span>
                 </Link>
               </Button>
             </div>

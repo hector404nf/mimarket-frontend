@@ -3,18 +3,25 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Search, ShoppingCart, User, Menu, X } from "lucide-react"
+import { Search, ShoppingCart, User, Menu, X, Store, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Badge } from "@/components/ui/badge"
 import SearchComponent from "@/components/search"
 import { useCart } from "@/lib/cart-store"
+import { useProfileType, useStoreAccess } from "@/hooks/use-profile-type"
+import { useAuth } from "@/contexts/auth-context"
+import NotificationsDropdown from "@/components/notifications-dropdown"
 
 export default function Navbar() {
   const pathname = usePathname()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const { isAuthenticated, user } = useAuth()
+  const { isStoreOwner, isPersonalUser, needsOnboarding } = useProfileType()
+  const { canAccessStoreDashboard } = useStoreAccess()
 
-  const navItems = [
+  // Elementos de navegación base
+  const baseNavItems = [
     { name: "Inicio", href: "/" },
     { name: "Tiendas", href: "/tiendas" },
     { name: "Electrónica", href: "/?categoria=electronica" },
@@ -22,10 +29,25 @@ export default function Navbar() {
     { name: "Hogar", href: "/?categoria=hogar" },
     { name: "Deportes", href: "/?categoria=deportes" },
     { name: "Belleza", href: "/?categoria=belleza" },
-    { name: "Configurar Perfil", href: "/onboarding" },
-    { name: "Iniciar Sesión", href: "/login" },
   ]
 
+  // Elementos condicionales basados en el estado del usuario
+  const conditionalNavItems = []
+  
+  if (!isAuthenticated) {
+    conditionalNavItems.push({ name: "Iniciar Sesión", href: "/login" })
+  } else {
+    if (needsOnboarding) {
+      conditionalNavItems.push({ name: "Configurar Perfil", href: "/onboarding" })
+    } else if (user?.tipo_usuario === 'administrador') {
+      conditionalNavItems.push({ name: "Dashboard Admin", href: "/admin-dashboard" })
+    } else if (isStoreOwner && canAccessStoreDashboard) {
+      conditionalNavItems.push({ name: "Mi Tienda", href: "/dashboard-tienda" })
+      conditionalNavItems.push({ name: "Productos", href: "/subir-producto" })
+    }
+  }
+
+  const navItems = [...baseNavItems, ...conditionalNavItems]
   const { getTotalItems } = useCart()
   const totalItems = getTotalItems()
 
@@ -73,21 +95,25 @@ export default function Navbar() {
           )}
 
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/carrito">
+            <Link href="/carrito" className="relative">
               <ShoppingCart className="h-5 w-5" />
+              {/* Mantener texto accesible como primer nodo para evitar mismatch de hidratación */}
+              <span className="sr-only">Carrito</span>
               {totalItems > 0 && (
-                <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-[10px]">
+                <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-[10px]" suppressHydrationWarning>
                   {totalItems}
                 </Badge>
               )}
-              <span className="sr-only">Carrito</span>
             </Link>
           </Button>
 
+          {/* Componente de notificaciones - solo para usuarios autenticados */}
+          {isAuthenticated && <NotificationsDropdown />}
+
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/perfil">
-              <User className="h-5 w-5" />
-              <span className="sr-only">Perfil</span>
+            <Link href={isStoreOwner ? "/dashboard-tienda" : "/perfil"}>
+              {isStoreOwner ? <Store className="h-5 w-5" /> : <User className="h-5 w-5" />}
+              <span className="sr-only">{isStoreOwner ? "Mi Tienda" : "Perfil"}</span>
             </Link>
           </Button>
 

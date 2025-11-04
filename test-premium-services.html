@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Servicios Premium - MiMarket</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto p-4">
+        <h1 class="text-2xl font-bold mb-4">Test de Servicios Premium</h1>
+        
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold mb-4">Simular Carrito con Productos</h2>
+            <p class="mb-4">Haz clic en el botón para agregar productos simulados al carrito y luego ir al checkout:</p>
+            
+            <button id="addTestProducts" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-4">
+                Agregar Productos de Prueba
+            </button>
+            
+            <button id="goToCheckout" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+                Ir al Checkout
+            </button>
+            
+            <div id="status" class="mt-4 p-3 rounded hidden"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('addTestProducts').addEventListener('click', function() {
+            // Simular productos en localStorage para el carrito
+            const testCartData = {
+                state: {
+                    items: [
+                        {
+                            id_carrito: 1,
+                            id_producto: 1,
+                            cantidad: 2,
+                            precio_unitario: 25.99,
+                            producto: {
+                                id: 1,
+                                nombre: "Smartphone Samsung Galaxy",
+                                precio: 25.99,
+                                imagen: "/placeholder.jpg",
+                                id_tienda: 1,
+                                tienda: {
+                                    id: 1,
+                                    nombre: "TechStore",
+                                    logo: "/placeholder-logo.png",
+                                    plan: "pro"
+                                }
+                            }
+                        },
+                        {
+                            id_carrito: 2,
+                            id_producto: 2,
+                            cantidad: 1,
+                            precio_unitario: 15.50,
+                            producto: {
+                                id: 2,
+                                nombre: "Auriculares Bluetooth",
+                                precio: 15.50,
+                                imagen: "/placeholder.jpg",
+                                id_tienda: 2,
+                                tienda: {
+                                    id: 2,
+                                    nombre: "AudioWorld",
+                                    logo: "/placeholder-logo.png",
+                                    plan: "basico"
+                                }
+                            }
+                        }
+                    ]
+                },
+                version: 0
+            };
+            
+            localStorage.setItem('cart-storage', JSON.stringify(testCartData));
+            
+            const status = document.getElementById('status');
+            status.className = 'mt-4 p-3 rounded bg-green-100 text-green-800';
+            status.textContent = '✅ Productos agregados al carrito exitosamente!';
+            status.classList.remove('hidden');
+        });
+        
+        document.getElementById('goToCheckout').addEventListener('click', function() {
+            window.location.href = 'http://localhost:3000/checkout';
+        });
+    </script>
+</body>
+</html>

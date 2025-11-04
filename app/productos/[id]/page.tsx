@@ -16,6 +16,7 @@ import {
   Truck,
   Shield,
   RotateCcw,
+  Loader2,
 } from "lucide-react"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
@@ -24,34 +25,72 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { productos } from "@/lib/data"
+import { useProducto } from "@/hooks/useProductos"
 import { useCart } from "@/lib/cart-store"
 import { toast } from "@/components/ui/use-toast"
 import ReviewsSection from "@/components/reviews-section"
 import RecommendationsSection from "@/components/recommendations-section"
 import { formatearPrecioParaguayo } from "@/lib/utils"
+import { CategoryIcon } from "@/lib/category-icons"
+import { getImagenesProducto } from "@/lib/image-utils"
 
 export default function ProductoPage() {
   const params = useParams()
   const { addItem } = useCart()
   const [imagenActual, setImagenActual] = useState(0)
   const [cantidad, setCantidad] = useState(1)
-  const [producto, setProducto] = useState<any>(null)
+  
+  const id = Number.parseInt(params.id as string)
+  const { producto, loading, error } = useProducto(id)
 
+  // Logs de depuración
   useEffect(() => {
-    const id = Number.parseInt(params.id as string)
-    const productoEncontrado = productos.find((p) => p.id === id)
-    setProducto(productoEncontrado)
-  }, [params.id])
+    if (producto) {
+      console.log('=== DEBUG PRODUCTO COMPLETO ===')
+      console.log('Producto recibido:', producto)
+      console.log('Tipo de producto:', typeof producto)
+      console.log('Propiedades del producto:', Object.keys(producto))
+      
+      console.log('=== IMÁGENES DEL PRODUCTO ===')
+      console.log('producto.imagen:', producto.imagen)
+      console.log('producto.imagenes:', producto.imagenes)
+      console.log('producto.imagen_principal:', producto.imagen_principal)
+      console.log('producto.imagenes_adicionales:', producto.imagenes_adicionales)
+      
+      const imagenesCalculadas = getImagenesProducto(producto)
+      console.log('=== RESULTADO DE getImagenesProducto ===')
+      console.log('Imágenes calculadas:', imagenesCalculadas)
+      console.log('Cantidad de imágenes:', imagenesCalculadas.length)
+      console.log('Tiene múltiples imágenes:', imagenesCalculadas.length > 1)
+      console.log('=== FIN DEBUG ===')
+    }
+  }, [producto])
 
-  if (!producto) {
+  if (loading) {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+            <p className="text-muted-foreground">Cargando producto...</p>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  if (error || !producto) {
     return (
       <div className="flex min-h-screen flex-col">
         <Navbar />
         <main className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <h1 className="text-2xl font-bold mb-2">Producto no encontrado</h1>
-            <p className="text-muted-foreground mb-4">El producto que buscas no existe o ha sido eliminado.</p>
+            <p className="text-muted-foreground mb-4">
+              {error || "El producto que buscas no existe o ha sido eliminado."}
+            </p>
             <Button asChild>
               <Link href="/">Volver al inicio</Link>
             </Button>
@@ -62,8 +101,17 @@ export default function ProductoPage() {
     )
   }
 
-  const imagenes = producto.imagenes || (producto.imagen ? [producto.imagen] : [])
+  const imagenes = getImagenesProducto(producto)
   const tieneMultiplesImagenes = imagenes.length > 1
+
+  // Debug info para mostrar en la UI
+  const debugInfo = {
+    totalImagenes: imagenes.length,
+    imagenes: imagenes,
+    tieneImagenesAdicionales: producto.imagenes_adicionales?.length || 0,
+    imagenesOriginales: producto.imagenes?.length || 0,
+    imagenPrincipal: producto.imagen_principal || producto.imagen
+  }
 
   const cambiarImagen = (direccion: "siguiente" | "anterior") => {
     if (direccion === "siguiente") {
@@ -77,14 +125,21 @@ export default function ProductoPage() {
     setImagenActual(index)
   }
 
-  const handleAddToCart = () => {
-    for (let i = 0; i < cantidad; i++) {
-      addItem(producto.id)
+  const handleAddToCart = async () => {
+    try {
+      const precio = parseFloat(producto.precio.toString())
+      await addItem(producto.id_producto, cantidad, precio)
+      toast({
+        title: "Producto añadido",
+        description: `${cantidad} ${producto.nombre}(s) añadido(s) al carrito.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "No se pudo agregar el producto al carrito. Inicia sesión para continuar.",
+        variant: "destructive"
+      })
     }
-    toast({
-      title: "Producto añadido",
-      description: `${cantidad} ${producto.nombre}(s) añadido(s) al carrito.`,
-    })
   }
 
   const precioConDescuento = producto.descuento > 0 ? producto.precio * (1 - producto.descuento / 100) : producto.precio
@@ -136,7 +191,12 @@ export default function ProductoPage() {
               Inicio
             </Link>
             <span>/</span>
-            <Link href={`/?categoria=${producto.categoria}`} className="hover:text-foreground">
+            <Link href={`/?categoria=${producto.categoria}`} className="hover:text-foreground flex items-center gap-1">
+              <CategoryIcon 
+                categorySlug={producto.categoria.toLowerCase().replace(/\s+/g, '')} 
+                categoryName={producto.categoria}
+                className="h-4 w-4"
+              />
               {producto.categoria}
             </Link>
             <span>/</span>
@@ -146,10 +206,11 @@ export default function ProductoPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
             {/* Galería de imágenes */}
             <div className="space-y-4">
+
               {/* Imagen principal */}
               <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
                 <Image
-                  src={imagenes[imagenActual] || "/placeholder.svg"}
+                  src={(imagenes[imagenActual] && typeof imagenes[imagenActual] === 'string' && imagenes[imagenActual].trim() !== '') ? imagenes[imagenActual] : "/placeholder.svg"}
                   alt={`${producto.nombre} - Imagen ${imagenActual + 1}`}
                   fill
                   className="object-cover"
@@ -216,7 +277,7 @@ export default function ProductoPage() {
                       }`}
                     >
                       <Image
-                        src={imagen || "/placeholder.svg"}
+                        src={(imagen && typeof imagen === 'string' && imagen.trim() !== '') ? imagen : "/placeholder.svg"}
                         alt={`${producto.nombre} - Miniatura ${index + 1}`}
                         fill
                         className="object-cover"

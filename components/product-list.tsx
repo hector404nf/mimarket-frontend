@@ -10,11 +10,13 @@ import { Heart, ShoppingCart, Package, Clock, Truck, ChevronLeft, ChevronRight, 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { productos } from "@/lib/data"
+import { useProductos } from "@/hooks/useProductos"
 import { useCart } from "@/lib/cart-store"
 import { useBehaviorTracking } from "@/hooks/use-behavior-tracking"
 import { toast } from "@/components/ui/use-toast"
 import { formatearPrecioParaguayo } from "@/lib/utils"
+import { Producto } from "@/lib/types/producto"
+import { getImagenesProducto, getImagenPorIndice } from "@/lib/image-utils"
 
 export default function ProductList() {
   const searchParams = useSearchParams()
@@ -27,69 +29,33 @@ export default function ProductList() {
   const precioMinParam = searchParams.get("precio_min")
   const precioMaxParam = searchParams.get("precio_max")
 
-  const [productosFiltrados, setProductosFiltrados] = useState(productos)
+  // Construir filtros para el backend
+  const filters = {
+    search: busquedaParam || undefined,
+    categoria: categoriaParam || categoriasParam || undefined,
+    sort_by: 'fecha_creacion' as const,
+    sort_order: 'desc' as const,
+    per_page: 20,
+  }
+
+  const { productos: productosFiltrados, loading, error, pagination, refetch } = useProductos(filters)
   const [imagenesActuales, setImagenesActuales] = useState<{ [key: number]: number }>({})
   const { addItem } = useCart()
   const { trackProductClick } = useBehaviorTracking()
 
+  // Refetch cuando cambien los parámetros de búsqueda
   useEffect(() => {
-    let resultado = [...productos]
-    console.log('ProductList - Parámetros recibidos:', { categoriaParam, categoriasParam })
-
-    // Filtro por categorías (soporte para una o múltiples)
-    if (categoriaParam || categoriasParam) {
-      const categoriasSeleccionadas = categoriasParam 
-        ? categoriasParam.split(",")
-        : [categoriaParam!]
-      console.log('ProductList - Categorías seleccionadas:', categoriasSeleccionadas)
-      console.log('ProductList - Productos antes del filtro:', resultado.length)
-      resultado = resultado.filter((p) => {
-        const coincide = categoriasSeleccionadas.includes(p.categoria)
-        console.log(`Producto ${p.nombre} (categoría: "${p.categoria}") coincide:`, coincide)
-        return coincide
-      })
-      console.log('ProductList - Productos después del filtro:', resultado.length)
+    const newFilters = {
+      search: busquedaParam || undefined,
+      categoria: categoriaParam || categoriasParam || undefined,
+      sort_by: 'fecha_creacion' as const,
+      sort_order: 'desc' as const,
+      per_page: 20,
     }
-
-    if (busquedaParam) {
-      const termino = busquedaParam.toLowerCase()
-      resultado = resultado.filter(
-        (p) => p.nombre.toLowerCase().includes(termino) || p.descripcion.toLowerCase().includes(termino),
-      )
-    }
-
-    // Filtro por tipos de venta (soporte para uno o múltiples)
-    if (tipoVentaParam || tiposVentaParam) {
-      const tiposSeleccionados = tiposVentaParam 
-        ? tiposVentaParam.split(",")
-        : [tipoVentaParam!]
-      resultado = resultado.filter((p) => 
-        tiposSeleccionados.includes(p.tipoVenta)
-      )
-    }
-
-    // Filtro por marcas
-    if (marcasParam) {
-      const marcasSeleccionadas = marcasParam.split(",")
-      resultado = resultado.filter((p) => 
-        marcasSeleccionadas.includes(p.marca)
-      )
-    }
-
-    // Filtro por precio
-    if (precioMinParam || precioMaxParam) {
-      const precioMin = precioMinParam ? parseFloat(precioMinParam) : 0
-      const precioMax = precioMaxParam ? parseFloat(precioMaxParam) : Infinity
-      resultado = resultado.filter((p) => {
-        const precio = p.descuento > 0 ? p.precio * (1 - p.descuento / 100) : p.precio
-        return precio >= precioMin && precio <= precioMax
-      })
-    }
-
-    setProductosFiltrados(resultado)
+    refetch(newFilters)
   }, [categoriaParam, categoriasParam, busquedaParam, tipoVentaParam, tiposVentaParam, marcasParam, precioMinParam, precioMaxParam])
 
-  const getTipoVentaInfo = (tipoVenta: string) => {
+  const getTipoVentaInfo = (tipoVenta?: string) => {
     switch (tipoVenta) {
       case "directa":
         return {
@@ -131,13 +97,20 @@ export default function ProductList() {
   }
 
   const getImagenPrincipal = (producto: any) => {
-    const imagenes = producto.imagenes || (producto.imagen ? [producto.imagen] : [])
+    const todasLasImagenes = getImagenesProducto(producto)
     const imagenActual = imagenesActuales[producto.id] || 0
-    return imagenes[imagenActual] || "/placeholder.svg"
+    const imagenUrl = todasLasImagenes[imagenActual]
+    
+    // Asegurar que siempre retornemos una URL válida
+    if (!imagenUrl || typeof imagenUrl !== 'string' || imagenUrl.trim() === '') {
+      return "/placeholder.svg"
+    }
+    
+    return imagenUrl
   }
 
   const getImagenes = (producto: any) => {
-    return producto.imagenes || (producto.imagen ? [producto.imagen] : [])
+    return getImagenesProducto(producto)
   }
 
   const cambiarImagen = (productoId: number, direccion: "siguiente" | "anterior", imagenes: string[]) => {
@@ -155,20 +128,30 @@ export default function ProductList() {
     })
   }
 
-  const handleAddToCart = (producto: any, e: React.MouseEvent) => {
+  const handleAddToCart = async (producto: any, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    addItem(producto.id)
-    toast({
-      title: "Producto añadido",
-      description: `${producto.nombre} ha sido añadido al carrito.`,
-    })
+    
+    try {
+      const precio = parseFloat(producto.precio.toString())
+      await addItem(producto.id_producto, 1, precio)
+      toast({
+        title: "Producto añadido",
+        description: `${producto.nombre} ha sido añadido al carrito.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "No se pudo agregar el producto al carrito. Inicia sesión para continuar.",
+        variant: "destructive"
+      })
+    }
   }
 
   return (
     <div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {productosFiltrados.map((producto) => {
+        {productosFiltrados.map((producto, index) => {
           const tipoInfo = getTipoVentaInfo(producto.tipoVenta)
           const IconComponent = tipoInfo.icon
           const imagenes = getImagenes(producto)
@@ -208,10 +191,11 @@ export default function ProductList() {
               >
                 <div className="aspect-square relative bg-muted overflow-hidden">
                   <Image
-                    src={getImagenPrincipal(producto) || "/placeholder.svg"}
+                    src={getImagenPrincipal(producto)}
                     alt={producto.nombre}
                     fill
                     className="object-cover group-hover:scale-105 transition-transform duration-300"
+                    priority={index === 0}
                   />
 
                   {/* Controles de navegación para múltiples imágenes */}
@@ -332,7 +316,28 @@ export default function ProductList() {
         })}
       </div>
 
-      {productosFiltrados.length === 0 && (
+      {loading && (
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground mt-4">Cargando productos...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="text-center py-12">
+          <h3 className="text-lg font-medium text-red-600">Error al cargar productos</h3>
+          <p className="text-muted-foreground mt-2">{error}</p>
+          <Button 
+            onClick={() => refetch()} 
+            variant="outline" 
+            className="mt-4"
+          >
+            Reintentar
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && productosFiltrados.length === 0 && (
         <div className="text-center py-12">
           <h3 className="text-lg font-medium">No se encontraron productos</h3>
           <p className="text-muted-foreground mt-2">Intenta con otra búsqueda o categoría</p>

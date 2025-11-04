@@ -10,10 +10,12 @@ import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { Plus } from "lucide-react"
 import RecommendationsSection from "@/components/recommendations-section"
+import ProtectedRoute from "@/components/ProtectedRoute"
 
 export default function Home() {
   return (
-    <div className="flex min-h-screen flex-col">
+    <ProtectedRoute>
+      <div className="flex min-h-screen flex-col">
       <Navbar />
       <main className="flex-1 max-w-7xl mx-auto w-full">
         <section className="px-4 md:px-6 py-6 md:py-10 w-full">
@@ -73,6 +75,7 @@ export default function Home() {
       </main>
       <Footer />
     </div>
+    </ProtectedRoute>
   )
 }
 

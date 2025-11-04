@@ -4,6 +4,7 @@ import { MapPin, Star } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { tiendas } from "@/lib/stores-data"
 import { productos } from "@/lib/data"
+import { CategoryIcon } from "@/lib/category-icons"
 
 export default function StoreList() {
   return (
@@ -55,7 +56,12 @@ export default function StoreList() {
 
               <div className="flex flex-wrap gap-1 mb-3">
                 {tienda.categorias.slice(0, 2).map((categoria) => (
-                  <Badge key={categoria} variant="secondary" className="text-xs">
+                  <Badge key={categoria} variant="secondary" className="text-xs flex items-center gap-1">
+                    <CategoryIcon 
+                      categorySlug={categoria.toLowerCase().replace(/\s+/g, '')} 
+                      categoryName={categoria}
+                      className="h-3 w-3"
+                    />
                     {categoria}
                   </Badge>
                 ))}

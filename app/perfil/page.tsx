@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
+import { useRouter } from "next/navigation"
 import {
   Package,
   CreditCard,
@@ -23,6 +24,7 @@ import {
   Globe,
   Download,
   ChevronRight,
+  LogOut,
 } from "lucide-react"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
@@ -39,46 +41,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { productos } from "@/lib/data"
 import { tiendas } from "@/lib/stores-data"
+import { useAuth } from "@/contexts/auth-context"
+import { ordenesService, OrdenBackend } from "@/lib/api/ordenes"
 
-// Datos simulados
-const pedidosSimulados = [
-  {
-    id: "ORD-001",
-    fecha: "2024-01-15",
-    tienda: "TechStore Premium",
-    productos: ["Smartphone Galaxy S23"],
-    total: 899.99,
-    estado: "entregado",
-    imagen: "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=100&h=100&fit=crop",
-  },
-  {
-    id: "ORD-002",
-    fecha: "2024-01-10",
-    tienda: "Fashion World",
-    productos: ["Camiseta Premium", "Jeans Slim"],
-    total: 129.98,
-    estado: "en_camino",
-    imagen: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=100&h=100&fit=crop",
-  },
-  {
-    id: "ORD-003",
-    fecha: "2024-01-05",
-    tienda: "Home & Garden",
-    productos: ["Lámpara LED", "Cojín Decorativo"],
-    total: 89.99,
-    estado: "preparando",
-    imagen: "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=100&h=100&fit=crop",
-  },
-  {
-    id: "ORD-004",
-    fecha: "2023-12-28",
-    tienda: "Sports Zone",
-    productos: ["Zapatillas Running"],
-    total: 159.99,
-    estado: "cancelado",
-    imagen: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100&h=100&fit=crop",
-  },
-]
+// Órdenes del backend
+type OrdenUI = {
+  idOrden: number
+  numero: string
+  fecha: string
+  total: number
+  estado: string
+  productosTexto: string
+  imagen: string
+}
+
+// Normaliza valores numéricos que pueden venir como string desde el backend
+const normalizeNumber = (value: unknown) => {
+  const num = typeof value === "number" ? value : parseFloat(String(value))
+  return Number.isFinite(num) ? num : 0
+}
 
 const tarjetasSimuladas = [
   {
@@ -123,31 +104,73 @@ const direccionesSimuladas = [
 ]
 
 export default function PerfilPage() {
+  const { user, isLoading, isAuthenticated, refreshUser, logout } = useAuth()
+  const router = useRouter()
   const [activeSection, setActiveSection] = useState("pedidos")
   const [searchTerm, setSearchTerm] = useState("")
   const [filterStatus, setFilterStatus] = useState("todos")
-  const [userProfile, setUserProfile] = useState<any>(null)
   const [showAddCard, setShowAddCard] = useState(false)
   const [showAddAddress, setShowAddAddress] = useState(false)
+  const [orders, setOrders] = useState<OrdenUI[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersError, setOrdersError] = useState<string>("")
+
+  const handleLogout = async () => {
+    try {
+      await logout()
+      router.push('/login')
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error)
+    }
+  }
 
   useEffect(() => {
-    // Cargar perfil del usuario
-    const profile = localStorage.getItem("userProfile")
-    if (profile) {
-      setUserProfile(JSON.parse(profile))
-    } else {
-      // Perfil por defecto si no existe
-      setUserProfile({
-        type: "personal",
-        personalInfo: {
-          firstName: "Juan",
-          lastName: "Pérez",
-          email: "juan@email.com",
-          phone: "+34 612 345 678",
-        },
-      })
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login')
     }
-  }, [])
+  }, [isLoading, isAuthenticated, router])
+
+  useEffect(() => {
+    if (isAuthenticated && !user) {
+      // Solo refrescar datos del usuario si está autenticado pero no hay datos de usuario
+      refreshUser()
+    }
+  }, [isAuthenticated, refreshUser])
+
+  useEffect(() => {
+    const fetchOrders = async () => {
+      if (!isAuthenticated || !user?.id) return
+      setOrdersLoading(true)
+      setOrdersError("")
+      try {
+        const data: OrdenBackend[] = await ordenesService.getOrdenesByUsuario(user.id)
+        const mapped: OrdenUI[] = data.map((o) => {
+          const nombres = (o.detalles || [])
+            .map((d) => d.producto?.nombre)
+            .filter(Boolean) as string[]
+          const productosTexto = nombres.length > 0 ? nombres.join(", ") : `${o.detalles?.length || 0} productos`
+          const firstImg = (o.detalles?.[0]?.producto?.imagen_principal_url || o.detalles?.[0]?.producto?.imagen_url || "/placeholder.svg")
+          return {
+            idOrden: o.id_orden,
+            numero: o.numero_orden,
+            fecha: new Date(o.created_at).toLocaleDateString(),
+            total: normalizeNumber(o.total),
+            estado: o.estado || "confirmado",
+            productosTexto,
+            imagen: firstImg,
+          }
+        })
+        setOrders(mapped)
+      } catch (err) {
+        console.error("Error cargando órdenes:", err)
+        setOrdersError("No se pudieron cargar tus pedidos")
+      } finally {
+        setOrdersLoading(false)
+      }
+    }
+
+    fetchOrders()
+  }, [isAuthenticated, user?.id])
 
   const getEstadoBadge = (estado: string) => {
     switch (estado) {
@@ -157,6 +180,10 @@ export default function PerfilPage() {
         return <Badge className="bg-blue-100 text-blue-800 text-xs">En camino</Badge>
       case "preparando":
         return <Badge className="bg-yellow-100 text-yellow-800 text-xs">Preparando</Badge>
+      case "confirmado":
+        return <Badge className="bg-green-100 text-green-800 text-xs">Confirmado</Badge>
+      case "pendiente":
+        return <Badge className="bg-gray-100 text-gray-800 text-xs">Pendiente</Badge>
       case "cancelado":
         return <Badge className="bg-red-100 text-red-800 text-xs">Cancelado</Badge>
       default:
@@ -167,11 +194,10 @@ export default function PerfilPage() {
         )
     }
   }
-
-  const pedidosFiltrados = pedidosSimulados.filter((pedido) => {
+  const pedidosFiltrados = orders.filter((pedido) => {
     const matchesSearch =
-      pedido.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pedido.tienda.toLowerCase().includes(searchTerm.toLowerCase())
+      pedido.numero.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      pedido.productosTexto.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesFilter = filterStatus === "todos" || pedido.estado === filterStatus
     return matchesSearch && matchesFilter
   })
@@ -186,9 +212,10 @@ export default function PerfilPage() {
     { id: "favoritos", label: "Favoritos", icon: Heart },
     { id: "configuracion", label: "Configuración", icon: Settings },
     { id: "ayuda", label: "Ayuda", icon: HelpCircle },
+    { id: "logout", label: "Cerrar Sesión", icon: LogOut },
   ]
 
-  if (!userProfile) {
+  if (isLoading || !user) {
     return (
       <div className="flex min-h-screen flex-col">
         <Navbar />
@@ -224,13 +251,13 @@ export default function PerfilPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <h2 className="font-semibold text-sm md:text-base truncate">
-                        {userProfile.personalInfo.firstName} {userProfile.personalInfo.lastName}
+                        {user.name} {user.apellido}
                       </h2>
                       <p className="text-xs md:text-sm text-muted-foreground truncate">
-                        {userProfile.personalInfo.email}
+                        {user.email}
                       </p>
                       <Badge variant="secondary" className="mt-1 text-xs">
-                        Cliente Premium
+                        Cliente {user.activo ? 'Activo' : 'Inactivo'}
                       </Badge>
                     </div>
                   </div>
@@ -242,9 +269,19 @@ export default function PerfilPage() {
                       return (
                         <button
                           key={item.id}
-                          onClick={() => setActiveSection(item.id)}
+                          onClick={() => {
+                            if (item.id === "logout") {
+                              handleLogout()
+                            } else {
+                              setActiveSection(item.id)
+                            }
+                          }}
                           className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors ${
-                            activeSection === item.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                            item.id === "logout" 
+                              ? "hover:bg-red-50 hover:text-red-600 text-red-500" 
+                              : activeSection === item.id 
+                                ? "bg-primary text-primary-foreground" 
+                                : "hover:bg-muted"
                           }`}
                         >
                           <Icon className="h-4 w-4 flex-shrink-0" />
@@ -299,7 +336,21 @@ export default function PerfilPage() {
 
                   {/* Lista de pedidos */}
                   <div className="space-y-4">
-                    {pedidosFiltrados.map((pedido) => (
+                    {ordersLoading && (
+                      <Card>
+                        <CardContent className="p-4 md:p-6">
+                          <p className="text-sm text-muted-foreground">Cargando pedidos...</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {ordersError && !ordersLoading && (
+                      <Card>
+                        <CardContent className="p-4 md:p-6">
+                          <p className="text-sm text-red-600">{ordersError}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {!ordersLoading && pedidosFiltrados.map((pedido) => (
                       <Card key={pedido.id} className="hover:shadow-md transition-shadow">
                         <CardContent className="p-4 md:p-6">
                           <div className="flex flex-col sm:flex-row gap-4">
@@ -316,10 +367,10 @@ export default function PerfilPage() {
                               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2 mb-1">
-                                    <h3 className="font-semibold text-sm md:text-base">{pedido.id}</h3>
+                                    <h3 className="font-semibold text-sm md:text-base">{pedido.numero}</h3>
                                     {getEstadoBadge(pedido.estado)}
                                   </div>
-                                  <p className="text-xs md:text-sm text-muted-foreground">{pedido.tienda}</p>
+                                  <p className="text-xs md:text-sm text-muted-foreground">{pedido.productosTexto}</p>
                                 </div>
                                 <div className="text-right flex-shrink-0">
                                   <p className="font-semibold text-sm md:text-base">${pedido.total.toFixed(2)}</p>
@@ -327,15 +378,9 @@ export default function PerfilPage() {
                                 </div>
                               </div>
 
-                              <div className="mb-4">
-                                <p className="text-xs md:text-sm text-muted-foreground">
-                                  {pedido.productos.join(", ")}
-                                </p>
-                              </div>
-
                               <div className="flex flex-col sm:flex-row gap-2">
                                 <Button variant="outline" size="sm" asChild className="w-full sm:w-auto bg-transparent">
-                                  <Link href={`/perfil/pedidos/${pedido.id}`}>Ver detalles</Link>
+                                  <Link href={`/perfil/pedidos/${pedido.idOrden}`}>Ver detalles</Link>
                                 </Button>
                                 <Button variant="outline" size="sm" className="w-full sm:w-auto bg-transparent">
                                   Repetir pedido
@@ -348,7 +393,7 @@ export default function PerfilPage() {
                     ))}
                   </div>
 
-                  {pedidosFiltrados.length === 0 && (
+                  {!ordersLoading && pedidosFiltrados.length === 0 && (
                     <Card>
                       <CardContent className="text-center py-12">
                         <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -699,6 +744,54 @@ export default function PerfilPage() {
                   </div>
 
                   <div className="space-y-6">
+                    {/* Información Personal */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-lg md:text-xl">
+                          <Settings className="h-5 w-5" />
+                          Información Personal
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="nombre">Nombre</Label>
+                            <Input id="nombre" value={user.name} readOnly className="bg-muted" />
+                          </div>
+                          <div>
+                            <Label htmlFor="apellido">Apellido</Label>
+                            <Input id="apellido" value={user.apellido} readOnly className="bg-muted" />
+                          </div>
+                        </div>
+                        <div>
+                          <Label htmlFor="email">Correo Electrónico</Label>
+                          <Input id="email" value={user.email} readOnly className="bg-muted" />
+                        </div>
+                        {user.telefono && (
+                          <div>
+                            <Label htmlFor="telefono">Teléfono</Label>
+                            <Input id="telefono" value={user.telefono} readOnly className="bg-muted" />
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="estado">Estado de la cuenta:</Label>
+                          <Badge variant={user.activo ? "default" : "destructive"}>
+                            {user.activo ? "Activa" : "Inactiva"}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="fecha">Miembro desde:</Label>
+                          <span className="text-sm text-muted-foreground">
+                            {new Date(user.created_at).toLocaleDateString('es-ES', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </span>
+                        </div>
+                      </CardContent>
+                    </Card>
+
                     {/* Notificaciones */}
                     <Card>
                       <CardHeader>

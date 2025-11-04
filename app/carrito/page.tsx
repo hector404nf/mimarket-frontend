@@ -1,28 +1,45 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { Minus, Plus, Trash2, ShoppingBag, ArrowLeft } from "lucide-react"
+import { Minus, Plus, Trash2, ShoppingBag, ArrowLeft, Loader2, Store, Package } from "lucide-react"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import { useCart } from "@/lib/cart-store"
+import { useCartSync } from "@/hooks/use-cart-sync"
 import { formatearPrecioParaguayo } from "@/lib/utils"
+import { useAuth } from "@/contexts/auth-context"
 
 export default function CarritoPage() {
-  const { items, updateQuantity, removeItem, getTotalPrice, getCartProducts, clearCart } = useCart()
+  const { items, updateQuantity, removeItem, getTotalPrice, getCartProducts, getGroupedByStore, clearCart, isLoading, error, loadCart } = useCart()
+  const { isAuthenticated } = useAuth()
   const [isClearing, setIsClearing] = useState(false)
+  
+  // Sincronizar carrito con autenticación
+  useCartSync()
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadCart()
+    }
+  }, [isAuthenticated, loadCart])
 
   const cartProducts = getCartProducts()
+  const gruposPorTienda = getGroupedByStore()
   const total = getTotalPrice()
 
   const handleClearCart = async () => {
     setIsClearing(true)
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    clearCart()
+    try {
+      await clearCart()
+    } catch (error) {
+      console.error('Error clearing cart:', error)
+    }
     setIsClearing(false)
   }
 
@@ -37,6 +54,41 @@ export default function CarritoPage() {
       default:
         return { label: "Disponible", color: "bg-gray-100 text-gray-800" }
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex-1 max-w-7xl mx-auto w-full">
+          <div className="px-4 md:px-6 py-6 md:py-10">
+            <div className="text-center py-12">
+              <Loader2 className="mx-auto h-12 w-12 animate-spin text-muted-foreground mb-4" />
+              <h1 className="text-xl font-medium mb-2">Cargando carrito...</h1>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex-1 max-w-7xl mx-auto w-full">
+          <div className="px-4 md:px-6 py-6 md:py-10">
+            <div className="text-center py-12">
+              <h1 className="text-xl font-medium mb-2 text-red-600">Error al cargar carrito</h1>
+              <p className="text-muted-foreground mb-4">{error}</p>
+              <Button onClick={() => loadCart()}>Reintentar</Button>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
   }
 
   if (cartProducts.length === 0) {
@@ -86,88 +138,143 @@ export default function CarritoPage() {
                 </Button>
               </div>
 
-              <div className="space-y-4">
-                {cartProducts.map((item) => {
-                  const { producto } = item
-                  if (!producto) return null
-
-                  const tipoInfo = getTipoVentaInfo(producto.tipoVenta)
-                  const precioFinal =
-                    producto.descuento > 0 ? producto.precio * (1 - producto.descuento / 100) : producto.precio
-
-                  return (
-                    <Card key={item.id}>
-                      <CardContent className="p-4">
-                        <div className="flex gap-4">
-                          <div className="relative h-20 w-20 flex-shrink-0">
-                            <Image
-                              src={producto.imagen || "/placeholder.svg"}
-                              alt={producto.nombre}
-                              fill
-                              className="object-cover rounded-md"
-                            />
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <Link
-                                  href={`/productos/${producto.id}`}
-                                  className="font-medium hover:text-primary line-clamp-2"
-                                >
-                                  {producto.nombre}
-                                </Link>
-                                <Badge variant="secondary" className={`mt-1 ${tipoInfo.color}`}>
-                                  {tipoInfo.label}
-                                </Badge>
-                              </div>
-
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => removeItem(item.id)}
-                                className="text-muted-foreground hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+              <div className="space-y-6">
+                {gruposPorTienda.map((grupo) => (
+                  <Card key={grupo.id_tienda} className="overflow-hidden">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {grupo.logo ? (
+                            <div className="relative h-8 w-8 flex-shrink-0">
+                              <Image
+                                src={grupo.logo}
+                                alt={grupo.nombre_tienda}
+                                fill
+                                className="object-cover rounded-full"
+                              />
                             </div>
-
-                            <div className="flex items-center justify-between mt-3">
-                              <div className="flex items-center gap-3">
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => updateQuantity(item.id, item.cantidad - 1)}
-                                >
-                                  <Minus className="h-3 w-3" />
-                                </Button>
-                                <span className="font-medium min-w-[3ch] text-center">{item.cantidad}</span>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => updateQuantity(item.id, item.cantidad + 1)}
-                                >
-                                  <Plus className="h-3 w-3" />
-                                </Button>
-                              </div>
-
-                              <div className="text-right">
-                                {producto.descuento > 0 && (
-                                  <p className="text-sm text-muted-foreground line-through">
-                                    {formatearPrecioParaguayo(producto.precio * item.cantidad)}
-                                  </p>
-                                )}
-                                <p className="font-semibold">{formatearPrecioParaguayo(precioFinal * item.cantidad)}</p>
-                              </div>
-                            </div>
+                          ) : (
+                            <Store className="h-8 w-8 text-muted-foreground" />
+                          )}
+                          <div>
+                            <CardTitle className="text-lg">{grupo.nombre_tienda}</CardTitle>
+                            <p className="text-sm text-muted-foreground">
+                              {grupo.productos.length} producto{grupo.productos.length !== 1 ? 's' : ''}
+                            </p>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
+                        <div className="ml-auto">
+                          <Badge variant="outline" className="text-xs">
+                            Plan {grupo.planTienda?.charAt(0).toUpperCase() + grupo.planTienda?.slice(1)}
+                          </Badge>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <div className="space-y-4">
+                        {grupo.productos.map((item, index) => {
+                          const { producto } = item
+                          if (!producto) return null
+
+                          const tipoInfo = getTipoVentaInfo("directa") // Por defecto, ya que viene del backend
+                          const precioUnitario = parseFloat(item.precio_unitario.toString())
+
+                          return (
+                            <div key={item.id_carrito}>
+                              {index > 0 && <Separator className="my-4" />}
+                              <div className="flex gap-4">
+                                <div className="relative h-20 w-20 flex-shrink-0">
+                                  <Image
+                                    src={producto.imagen_principal || "/placeholder.svg"}
+                                    alt={producto.nombre}
+                                    fill
+                                    className="object-cover rounded-md"
+                                  />
+                                </div>
+
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <Link
+                                        href={`/productos/${producto.id_producto}`}
+                                        className="font-medium hover:text-primary line-clamp-2"
+                                      >
+                                        {producto.nombre}
+                                      </Link>
+                                      <Badge variant="secondary" className={`mt-1 ${tipoInfo.color}`}>
+                                        {tipoInfo.label}
+                                      </Badge>
+                                      <p className="text-sm text-muted-foreground mt-1">
+                                        {formatearPrecioParaguayo(precioUnitario)} c/u
+                                      </p>
+                                    </div>
+
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeItem(item.id_carrito)}
+                                      className="text-muted-foreground hover:text-destructive"
+                                      disabled={isLoading}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+
+                                  <div className="flex items-center justify-between mt-3">
+                                    <div className="flex items-center gap-3">
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => updateQuantity(item.id_carrito, item.cantidad - 1)}
+                                        disabled={isLoading}
+                                      >
+                                        <Minus className="h-3 w-3" />
+                                      </Button>
+                                      <span className="font-medium min-w-[3ch] text-center">{item.cantidad}</span>
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => updateQuantity(item.id_carrito, item.cantidad + 1)}
+                                        disabled={isLoading}
+                                      >
+                                        <Plus className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+
+                                    <div className="text-right">
+                                      <p className="font-semibold">{formatearPrecioParaguayo(precioUnitario * item.cantidad)}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      
+                      {/* Subtotal por tienda */}
+                      <div className="mt-4 pt-4 border-t">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">Subtotal de {grupo.nombre_tienda}</span>
+                          </div>
+                          <span className="font-semibold">{formatearPrecioParaguayo(grupo.subtotal)}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-muted-foreground">
+                            Métodos disponibles: {grupo.metodosDisponibles.join(', ')}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Comisión: {grupo.comisionPorcentaje}%
+                          </span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </div>
 
