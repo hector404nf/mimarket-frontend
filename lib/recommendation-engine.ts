@@ -1,6 +1,6 @@
 "use client"
 
-import { NLPEngine, type NLPResult } from "./nlp-engine"
+import { NLPEngine, nlpEngine, type NLPAnalysis } from "./nlp-engine"
 import { BehaviorTracker, type CategoryInterest } from "./behavior-tracker"
 import { productos } from "./data"
 import { tiendas } from "./stores-data"
@@ -8,13 +8,13 @@ import { tiendas } from "./stores-data"
 // Motor de recomendaciones inteligente
 export class RecommendationEngine {
   private static instance: RecommendationEngine
-  private nlpEngine: NLPEngine
+  private nlpEngine: NLPEngine | undefined
   private behaviorTracker: BehaviorTracker
 
   constructor() {
     // Guard against SSR
     if (typeof window !== "undefined") {
-      this.nlpEngine = NLPEngine.getInstance()
+      this.nlpEngine = nlpEngine
       this.behaviorTracker = BehaviorTracker.getInstance()
     }
   }
@@ -39,18 +39,20 @@ export class RecommendationEngine {
         products: [],
         stores: [],
         nlpAnalysis: {
-          intent: { intent: "unknown", confidence: 0 },
           categories: [],
-          keywords: [],
+          intent: "browse",
+          sentiment: "neutral",
           urgency: 0,
-          salesType: null,
+          priceRange: null,
+          saleType: null,
         },
         explanation: "Sistema no disponible en el servidor",
       }
     }
 
     // Procesar consulta con NLP
-    const nlpResult = this.nlpEngine.processQuery(query)
+    const analysis = this.nlpEngine.analyze(query)
+    const keywords = this.extractKeywords(query)
 
     // Obtener datos de comportamiento
     const behaviorData = this.behaviorTracker.getBehaviorData()
@@ -59,25 +61,27 @@ export class RecommendationEngine {
 
     // Generar recomendaciones de productos
     const productRecommendations = this.generateProductRecommendations(
-      nlpResult,
+      analysis,
+      keywords,
       interestCategories,
       mostViewedProducts,
       limit,
     )
 
     // Generar recomendaciones de tiendas
-    const storeRecommendations = this.generateStoreRecommendations(nlpResult, interestCategories, Math.ceil(limit / 3))
+    const storeRecommendations = this.generateStoreRecommendations(analysis, interestCategories, Math.ceil(limit / 3))
 
     return {
       products: productRecommendations,
       stores: storeRecommendations,
-      nlpAnalysis: nlpResult,
-      explanation: this.generateExplanation(nlpResult, interestCategories),
+      nlpAnalysis: analysis,
+      explanation: this.generateExplanation(analysis, interestCategories),
     }
   }
 
   private generateProductRecommendations(
-    nlpResult: NLPResult,
+    analysis: NLPAnalysis,
+    keywords: string[],
     interests: CategoryInterest[],
     viewedProducts: any[],
     limit: number,
@@ -89,7 +93,7 @@ export class RecommendationEngine {
       const reasons: string[] = []
 
       // Score basado en NLP
-      const nlpScore = this.calculateNLPScore(producto, nlpResult)
+      const nlpScore = this.calculateNLPScore(producto, analysis, keywords)
       score += nlpScore.score
       reasons.push(...nlpScore.reasons)
 
@@ -119,7 +123,7 @@ export class RecommendationEngine {
   }
 
   private generateStoreRecommendations(
-    nlpResult: NLPResult,
+    analysis: NLPAnalysis,
     interests: CategoryInterest[],
     limit: number,
   ): StoreRecommendation[] {
@@ -143,10 +147,9 @@ export class RecommendationEngine {
       }
 
       // Score basado en NLP
-      const nlpCategoryMatch = nlpResult.categories.some((nlpCat) =>
+      const nlpCategoryMatch = analysis.categories.some((nlpCat) =>
         tienda.categorias.some(
-          (storeCat) =>
-            storeCat.toLowerCase().includes(nlpCat.category) || nlpCat.category.includes(storeCat.toLowerCase()),
+          (storeCat) => storeCat.toLowerCase().includes(nlpCat) || nlpCat.includes(storeCat.toLowerCase()),
         ),
       )
 
@@ -174,36 +177,36 @@ export class RecommendationEngine {
     return recommendations.sort((a, b) => b.score - a.score).slice(0, limit)
   }
 
-  private calculateNLPScore(producto: any, nlpResult: NLPResult): ScoreResult {
+  private calculateNLPScore(producto: any, analysis: NLPAnalysis, keywords: string[]): ScoreResult {
     let score = 0
     const reasons: string[] = []
 
     // Coincidencia de categoría
-    const categoryMatch = nlpResult.categories.find((cat) => cat.category === producto.categoria.toLowerCase())
-    if (categoryMatch) {
-      score += categoryMatch.confidence * 2
-      reasons.push(`Coincide con la categoría "${categoryMatch.category}"`)
+    const categoriaProducto = (producto.categoria || "").toLowerCase()
+    const categoryMatched = analysis.categories.some((cat) => cat === categoriaProducto)
+    if (categoryMatched) {
+      score += 1.5
+      reasons.push(`Coincide con la categoría "${categoriaProducto}"`)
     }
 
     // Coincidencia de palabras clave
-    const keywordMatches = nlpResult.keywords.filter(
-      (keyword) =>
-        producto.nombre.toLowerCase().includes(keyword) || producto.descripcion.toLowerCase().includes(keyword),
-    )
+    const nombre = (producto.nombre || "").toLowerCase()
+    const descripcion = (producto.descripcion || "").toLowerCase()
+    const keywordMatches = keywords.filter((kw) => nombre.includes(kw) || descripcion.includes(kw))
     if (keywordMatches.length > 0) {
       score += keywordMatches.length * 0.3
       reasons.push(`Coincide con palabras clave: ${keywordMatches.join(", ")}`)
     }
 
     // Tipo de venta
-    if (nlpResult.salesType && nlpResult.salesType === producto.tipoVenta) {
+    if (analysis.saleType && analysis.saleType === producto.tipoVenta) {
       score += 1
-      reasons.push(`Tipo de venta coincide: ${nlpResult.salesType}`)
+      reasons.push(`Tipo de venta coincide: ${analysis.saleType}`)
     }
 
     // Urgencia
-    if (nlpResult.urgency > 0.5 && producto.tipoVenta === "directa") {
-      score += nlpResult.urgency
+    if (analysis.urgency > 0.5 && producto.tipoVenta === "directa") {
+      score += analysis.urgency
       reasons.push("Disponible para compra inmediata")
     }
 
@@ -236,16 +239,14 @@ export class RecommendationEngine {
     return { score, reasons }
   }
 
-  private generateExplanation(nlpResult: NLPResult, interests: CategoryInterest[]): string {
+  private generateExplanation(analysis: NLPAnalysis, interests: CategoryInterest[]): string {
     const explanations: string[] = []
 
-    if (nlpResult.categories.length > 0) {
-      explanations.push(`Detecté que buscas productos de: ${nlpResult.categories.map((c) => c.category).join(", ")}`)
+    if (analysis.categories.length > 0) {
+      explanations.push(`Detecté que buscas productos de: ${analysis.categories.join(", ")}`)
     }
 
-    if (nlpResult.intent.confidence > 0.5) {
-      explanations.push(`Tu intención parece ser: ${nlpResult.intent.intent}`)
-    }
+    explanations.push(`Tu intención parece ser: ${analysis.intent}`)
 
     if (interests.length > 0) {
       explanations.push(
@@ -258,13 +259,27 @@ export class RecommendationEngine {
 
     return explanations.join(". ")
   }
+
+  private extractKeywords(text: string): string[] {
+    const stopwords = new Set([
+      "de","la","que","el","en","y","a","los","del","se","las","por","un","para","con","no","una","su","al","lo",
+      "como","más","pero","sus","le","ya","o","este","sí","porque","esta","entre","cuando","muy","sin","sobre","también",
+    ])
+    return text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .split(/\W+/)
+      .filter((w) => w && !stopwords.has(w) && w.length >= 3)
+      .slice(0, 10)
+  }
 }
 
 // Tipos para recomendaciones
 export interface RecommendationResult {
   products: ProductRecommendation[]
   stores: StoreRecommendation[]
-  nlpAnalysis: NLPResult
+  nlpAnalysis: NLPAnalysis
   explanation: string
 }
 

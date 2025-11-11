@@ -13,8 +13,11 @@ export interface ProductoBackend {
   sku: string;
   peso?: number;
   dimensiones?: string;
+  // Campo real en BD/API
+  tipo_vendedor?: 'directa' | 'pedido' | 'delivery';
   imagen_principal: string;
   imagen_principal_thumb?: string;
+  imagen_principal_media_id?: number;
   imagenes_adicionales: Array<{
     id: number;
     url: string;
@@ -57,6 +60,10 @@ export interface Producto {
   marca?: string;
   imagen?: string; // Mantener para compatibilidad
   imagenes: string[];
+  // Medios de galería con IDs para edición/borrado
+  galeriaMedia?: Array<{ id: number; url: string; thumb_url?: string; preview_url?: string }>;
+  // ID de la imagen principal para poder eliminarla
+  imagenPrincipalMediaId?: number;
   tipoVenta?: "directa" | "pedido" | "delivery";
   stock: number;
   tiempoEntrega?: string;
@@ -94,9 +101,11 @@ export function mapProductoBackendToFrontend(producto: ProductoBackend): Product
     marca: producto.tienda?.nombre_tienda || '',
     imagen: producto.imagen_principal,
     imagenes: [producto.imagen_principal, ...imagenesAdicionales],
-    tipoVenta: "directa", // Por defecto
+    galeriaMedia: producto.imagenes_adicionales?.map(img => ({ id: img.id, url: img.url, thumb_url: img.thumb_url, preview_url: img.preview_url })) || [],
+    imagenPrincipalMediaId: producto.imagen_principal_media_id,
+    tipoVenta: producto.tipo_vendedor ?? "directa",
     stock: producto.stock,
-    tiempoEntrega: "2-3 días", // Por defecto
+    tiempoEntrega: "2-3 días", // Sin campo dedicado; mantener por defecto
     tiendaId: producto.id_tienda,
     rating: producto.calificacion_promedio,
     reviews: producto.total_ventas,
@@ -118,15 +127,17 @@ export function mapProductoBackendToFrontend(producto: ProductoBackend): Product
 // Función para convertir de frontend a backend
 export function mapProductoFrontendToBackend(producto: Producto): Omit<ProductoBackend, 'id_producto' | 'fecha_creacion' | 'fecha_actualizacion'> {
   // Convertir URLs de imágenes adicionales a objetos (simplificado para crear/actualizar)
-  const imagenesAdicionales = producto.imagenes.slice(1).map((url, index) => ({
-    id: 0, // Se asignará en el backend
-    url: url,
-    thumb_url: url, // Por defecto, el backend generará las miniaturas
-    preview_url: url,
-    name: `imagen-${index + 1}`,
-    file_name: `imagen-${index + 1}.jpg`,
-    size: 0
-  }));
+  const imagenesAdicionales = Array.isArray(producto.imagenes)
+    ? producto.imagenes.slice(1).map((url, index) => ({
+      id: 0, // Se asignará en el backend
+      url: url,
+      thumb_url: url, // Por defecto, el backend generará las miniaturas
+      preview_url: url,
+      name: `imagen-${index + 1}`,
+      file_name: `imagen-${index + 1}.jpg`,
+      size: 0
+    }))
+    : [];
 
   return {
     id_tienda: producto.tiendaId,
@@ -141,7 +152,7 @@ export function mapProductoFrontendToBackend(producto: Producto): Omit<ProductoB
     sku: producto.sku || '',
     peso: producto.peso,
     dimensiones: producto.dimensiones,
-    imagen_principal: producto.imagen || producto.imagenes[0] || '',
+    imagen_principal: producto.imagen ?? (Array.isArray(producto.imagenes) ? producto.imagenes[0] : ''),
     imagen_principal_thumb: undefined,
     imagenes_adicionales: imagenesAdicionales,
     activo: producto.activo ?? true,

@@ -12,10 +12,15 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useProfileType } from "@/hooks/use-profile-type"
 import { useProductosByTienda } from "@/hooks/useProductos"
+import { productosService } from "@/lib/api/productos"
+import { toast } from "@/components/ui/use-toast"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 
 export default function ProductosTiendaPage() {
   const [busqueda, setBusqueda] = useState("")
   const [imagenesActuales, setImagenesActuales] = useState<{ [key: number]: number }>({})
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; nombre: string } | null>(null)
   const { storeInfo } = useProfileType()
   const tiendaId = storeInfo?.id || 0
   const { productos, loading, error, pagination, refetch } = useProductosByTienda(tiendaId, { per_page: 12 })
@@ -101,6 +106,23 @@ export default function ProductosTiendaPage() {
 
       return { ...prev, [productoId]: nueva }
     })
+  }
+
+  const confirmDeleteAction = async () => {
+    if (!confirmDelete) return
+    const id = confirmDelete.id
+    try {
+      setDeletingId(id)
+      await productosService.deleteProducto(id)
+      toast({ title: "Producto eliminado", description: `Se eliminó el producto #${id}` })
+      setConfirmDelete(null)
+      refetch()
+    } catch (err) {
+      toast({ title: "Error al eliminar", description: "No se pudo eliminar el producto", variant: "destructive" })
+      console.error("Error deleting product", err)
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   return (
@@ -294,18 +316,22 @@ export default function ProductosTiendaPage() {
                                 </Link>
                               </Button>
 
-                              <Button variant="outline" size="sm" className="flex-1 lg:flex-none bg-transparent">
-                                <Edit className="h-4 w-4 mr-1" />
-                                <span className="hidden sm:inline">Editar</span>
+                              <Button variant="outline" size="sm" asChild className="flex-1 lg:flex-none bg-transparent">
+                                <Link href={`/dashboard-tienda/productos/${producto.id_producto || producto.id}/editar`}>
+                                  <Edit className="h-4 w-4 mr-1" />
+                                  <span className="hidden sm:inline">Editar</span>
+                                </Link>
                               </Button>
 
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="text-red-600 hover:text-red-700 flex-1 lg:flex-none bg-transparent"
+                                onClick={() => setConfirmDelete({ id: (producto.id_producto || producto.id), nombre: producto.nombre })}
+                                disabled={deletingId === (producto.id_producto || producto.id)}
                               >
                                 <Trash2 className="h-4 w-4 mr-1" />
-                                <span className="hidden sm:inline">Eliminar</span>
+                                <span className="hidden sm:inline">{deletingId === (producto.id_producto || producto.id) ? "Eliminando..." : "Eliminar"}</span>
                               </Button>
                             </div>
                           </div>
@@ -332,6 +358,27 @@ export default function ProductosTiendaPage() {
           </Card>
         </div>
       </main>
+      {/* Modal de confirmación de eliminación */}
+      <Dialog open={!!confirmDelete} onOpenChange={(open) => { if (!open) setConfirmDelete(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar producto</DialogTitle>
+            <DialogDescription>
+              {confirmDelete ? (
+                <>¿Estás seguro de que deseas eliminar "{confirmDelete.nombre}"? Esta acción no se puede deshacer.</>
+              ) : (
+                <>¿Estás seguro de que deseas eliminar este producto? Esta acción no se puede deshacer.</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(null)} disabled={deletingId !== null}>Cancelar</Button>
+            <Button variant="destructive" onClick={confirmDeleteAction} disabled={deletingId !== null}>
+              {deletingId !== null ? "Eliminando..." : "Eliminar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Footer />
     </div>
   )

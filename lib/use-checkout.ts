@@ -5,6 +5,7 @@ import { toast } from '@/components/ui/use-toast'
 
 interface CheckoutData {
   metodo_pago: string
+  id_metodo_pago?: number
   direccion_envio?: string
   notas?: string
   codigo_cupon?: string
@@ -61,13 +62,14 @@ export function useCheckout() {
   const [totals, setTotals] = useState<CheckoutTotals | null>(null)
   const { isAuthenticated } = useAuth()
 
-  // Construir URL dinámica: si hay NEXT_PUBLIC_API_URL usar `${base}/api` + path;
-  // si no hay, usar el proxy local `/api`.
+  // Construir URL dinámica:
+  // - Si hay NEXT_PUBLIC_API_URL, añadir "/api" solo si el valor no termina en "/api".
+  // - Si no hay, usar el proxy local "/api".
   const buildApiUrl = (path: string) => {
-    const base = process.env.NEXT_PUBLIC_API_URL
+    const base = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '')
     const normalizedPath = path.startsWith('/') ? path : `/${path}`
-    if (base) return `${base}/api${normalizedPath}`
-    return `/api${normalizedPath}`
+    const prefix = base ? (base.endsWith('/api') ? base : `${base}/api`) : '/api'
+    return `${prefix}${normalizedPath}`
   }
 
   const calculateTotals = async (codigoCupon?: string): Promise<CheckoutTotals | null> => {

@@ -24,6 +24,11 @@ import { formatearPrecioParaguayo } from "@/lib/utils"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
 import { useStoreAccess, useProfileType } from "@/hooks/use-profile-type"
+import { comisionesService, ComisionResumen } from "@/lib/api/comisiones"
+import { ordenesService, OrdenBackend } from "@/lib/api/ordenes"
+import { productosService } from "@/lib/api/productos"
+import type { Producto } from "@/lib/types/producto"
+import { analiticasService, AnaliticasTienda } from "@/lib/api/analiticas"
 
 // Datos simulados para el dashboard
 const dashboardData = {
@@ -89,6 +94,176 @@ export default function DashboardTiendaPage() {
   const { canAccessStoreDashboard } = useStoreAccess()
   const { storeInfo, isStoreOwner } = useProfileType()
 
+  const [resumen, setResumen] = useState<ComisionResumen | null>(null)
+  const [loadingResumen, setLoadingResumen] = useState<boolean>(true)
+  const [errorResumen, setErrorResumen] = useState<string | null>(null)
+
+  // Estado para datos reales
+  const [ventasRecientes, setVentasRecientes] = useState<Array<{
+    id: string
+    cliente: string
+    producto: string
+    monto: number
+    estado: string
+    fecha: string
+  }>>([])
+  const [loadingVentas, setLoadingVentas] = useState<boolean>(false)
+
+  const [productosPopulares, setProductosPopulares] = useState<Array<{
+    nombre: string
+    ventas: number
+    ingresos: number
+    stock: number | string
+  }>>([])
+  const [loadingProductos, setLoadingProductos] = useState<boolean>(false)
+  const [productosList, setProductosList] = useState<Producto[]>([])
+
+  const [ventasPorMes, setVentasPorMes] = useState<Array<{ mes: string; ventas: number }>>([])
+  const [analiticas, setAnaliticas] = useState<AnaliticasTienda | null>(null)
+  const [loadingAnaliticas, setLoadingAnaliticas] = useState<boolean>(false)
+
+  useEffect(() => {
+    const tiendaId = storeInfo?.id
+    if (!tiendaId) return
+
+    setLoadingResumen(true)
+    setErrorResumen(null)
+    comisionesService
+      .getResumenComisionesTienda(tiendaId)
+      .then(({ data }) => {
+        setResumen(data)
+      })
+      .catch((err: any) => {
+        const msg = err?.message || "No se pudo cargar el resumen de comisiones"
+        setErrorResumen(msg)
+      })
+      .finally(() => setLoadingResumen(false))
+  }, [storeInfo?.id])
+
+  // Cargar analíticas del backend (ingresos, tiempos, conversión, satisfacción)
+  useEffect(() => {
+    const tiendaId = storeInfo?.id
+    if (!tiendaId) return
+
+    setLoadingAnaliticas(true)
+    analiticasService
+      .getAnaliticasTienda(tiendaId)
+      .then((data) => setAnaliticas(data))
+      .catch(() => setAnaliticas(null))
+      .finally(() => setLoadingAnaliticas(false))
+  }, [storeInfo?.id])
+
+  // Cargar ventas recientes y analíticas desde órdenes reales
+  useEffect(() => {
+    const tiendaId = storeInfo?.id
+    if (!tiendaId) return
+
+    setLoadingVentas(true)
+    ordenesService
+      .getOrdenesByTienda(tiendaId)
+      .then((ordenes: OrdenBackend[]) => {
+        // Ordenar por fecha desc y tomar las más recientes (hasta 10)
+        const recientes = [...ordenes]
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 10)
+          .map((o) => {
+            const cliente = [o.user?.name, o.user?.apellido].filter(Boolean).join(" ") || "—"
+            const firstProducto = o.detalles?.[0]?.producto?.nombre
+            const otrosCount = (o.detalles?.length || 0) - 1
+            const producto = firstProducto
+              ? otrosCount > 0
+                ? `${firstProducto} + ${otrosCount} más`
+                : firstProducto
+              : `${o.detalles?.[0]?.cantidad || 0} ítems`
+            const idStr = o.numero_orden || `ORD-${o.id_orden}`
+            const fechaStr = new Date(o.created_at).toLocaleDateString("es-PY")
+            return {
+              id: idStr,
+              cliente,
+              producto,
+              monto: o.total,
+              estado: o.estado,
+              fecha: fechaStr,
+            }
+          })
+        setVentasRecientes(recientes)
+
+        // Analítica: ventas por mes (últimos 6 meses)
+        const mesesAbrev = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+        const now = new Date()
+        const buckets: Array<{ key: string; mes: string; year: number; total: number }> = []
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+          const key = `${d.getFullYear()}-${d.getMonth()}`
+          buckets.push({ key, mes: mesesAbrev[d.getMonth()], year: d.getFullYear(), total: 0 })
+        }
+        ordenes.forEach((o) => {
+          const d = new Date(o.created_at)
+          const key = `${d.getFullYear()}-${d.getMonth()}`
+          const bucket = buckets.find((b) => b.key === key)
+          if (bucket) bucket.total += o.total
+        })
+        setVentasPorMes(buckets.map((b) => ({ mes: b.mes, ventas: b.total })))
+      })
+      .catch(() => {
+        setVentasRecientes([])
+        setVentasPorMes([])
+      })
+      .finally(() => setLoadingVentas(false))
+  }, [storeInfo?.id])
+
+  // Cargar productos populares reales de la tienda
+  useEffect(() => {
+    const tiendaId = storeInfo?.id
+    if (!tiendaId) return
+
+    setLoadingProductos(true)
+    productosService
+      .getProductosByTienda(tiendaId, { per_page: 100 })
+      .then((resp) => {
+        const productos = resp.data
+        setProductosList(productos)
+      })
+      .catch(() => setProductosPopulares([]))
+      .finally(() => setLoadingProductos(false))
+  }, [storeInfo?.id])
+
+  // Derivar productos populares desde analíticas si está disponible; si no, usar total_ventas
+  useEffect(() => {
+    // Si tenemos top_productos desde analíticas, priorizar esa fuente
+    if (analiticas && Array.isArray(analiticas.top_productos) && analiticas.top_productos.length > 0) {
+      const top = analiticas.top_productos.slice(0, 8).map((tp) => {
+        const cantidad = typeof (tp as any).cantidad_total === 'string' ? parseInt((tp as any).cantidad_total, 10) : (tp as any).cantidad_total || 0
+        const monto = typeof (tp as any).monto_total === 'string' ? parseFloat((tp as any).monto_total) : (tp as any).monto_total || 0
+        const prod = productosList.find((p) => p.id_producto === tp.id_producto || p.id === tp.id_producto)
+        return {
+          nombre: prod?.nombre || `Producto #${tp.id_producto}`,
+          ventas: cantidad || 0,
+          ingresos: monto || 0,
+          stock: typeof prod?.stock === 'number' ? prod!.stock : '—',
+        }
+      })
+      setProductosPopulares(top)
+      return
+    }
+
+    // Fallback: calcular top por total_ventas del listado completo
+    if (productosList && productosList.length > 0) {
+      const topFallback = [...productosList]
+        .sort((a, b) => (b.total_ventas || 0) - (a.total_ventas || 0))
+        .slice(0, 8)
+        .map((p) => ({
+          nombre: p.nombre,
+          ventas: p.total_ventas || 0,
+          ingresos: (p.total_ventas || 0) * (p.precio || 0),
+          stock: typeof p.stock === 'number' ? p.stock : '—',
+        }))
+      setProductosPopulares(topFallback)
+    } else {
+      setProductosPopulares([])
+    }
+  }, [analiticas?.top_productos, productosList])
+
   const getEstadoBadge = (estado: string) => {
     switch (estado) {
       case "completado":
@@ -149,71 +324,89 @@ export default function DashboardTiendaPage() {
             </div>
           </div>
 
-          {/* Estadísticas principales */}
+          {/* Estadísticas principales - conectadas a resumen de comisiones */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Ventas Totales</CardTitle>
+                <CardTitle className="text-sm font-medium">Monto de Comisiones</CardTitle>
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{formatearPrecioParaguayo(dashboardData.stats.totalVentas)}</div>
-                <p className="text-xs text-muted-foreground">+12% desde el mes pasado</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen
+                    ? "Cargando…"
+                    : formatearPrecioParaguayo(resumen?.monto_total ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {errorResumen ? "Sin datos" : "Total acumulado de comisiones"}
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pedidos Hoy</CardTitle>
+                <CardTitle className="text-sm font-medium">Total de Comisiones</CardTitle>
                 <ShoppingCart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardData.stats.pedidosHoy}</div>
-                <p className="text-xs text-muted-foreground">+3 desde ayer</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen ? "—" : (resumen?.total_comisiones ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Comisiones generadas</p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Productos Activos</CardTitle>
+                <CardTitle className="text-sm font-medium">Pendientes</CardTitle>
                 <Package className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardData.stats.productosActivos}</div>
-                <p className="text-xs text-muted-foreground">5 sin stock</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen ? "—" : (resumen?.pendientes ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Comisiones sin pagar</p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Calificación</CardTitle>
+                <CardTitle className="text-sm font-medium">Pagadas</CardTitle>
                 <Star className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardData.stats.calificacionPromedio}</div>
-                <p className="text-xs text-muted-foreground">De 127 reseñas</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen ? "—" : (resumen?.pagadas ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Comisiones liquidadas</p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Visitas Hoy</CardTitle>
+                <CardTitle className="text-sm font-medium">Vencidas</CardTitle>
                 <Eye className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardData.stats.visitasHoy}</div>
-                <p className="text-xs text-muted-foreground">+18% vs ayer</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen ? "—" : (resumen?.vencidas ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Comisiones vencidas</p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Clientes Nuevos</CardTitle>
+                <CardTitle className="text-sm font-medium">Promedio Comisión</CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardData.stats.clientesNuevos}</div>
-                <p className="text-xs text-muted-foreground">Esta semana</p>
+                <div className="text-2xl font-bold">
+                  {loadingResumen
+                    ? "—"
+                    : formatearPrecioParaguayo(resumen?.promedio_comision ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">Promedio por comisión</p>
               </CardContent>
             </Card>
           </div>
@@ -236,7 +429,7 @@ export default function DashboardTiendaPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {dashboardData.ventasRecientes.map((venta) => (
+                    {ventasRecientes.map((venta) => (
                       <div key={venta.id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-1">
@@ -252,6 +445,12 @@ export default function DashboardTiendaPage() {
                         </div>
                       </div>
                     ))}
+                    {loadingVentas && (
+                      <div className="text-sm text-muted-foreground">Cargando ventas…</div>
+                    )}
+                    {!loadingVentas && ventasRecientes.length === 0 && (
+                      <div className="text-sm text-muted-foreground">No hay ventas recientes.</div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -268,7 +467,7 @@ export default function DashboardTiendaPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {dashboardData.productosPopulares.map((producto, index) => (
+                    {productosPopulares.map((producto, index) => (
                       <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
                         <div className="flex-1">
                           <h3 className="font-medium">{producto.nombre}</h3>
@@ -285,6 +484,12 @@ export default function DashboardTiendaPage() {
                         </div>
                       </div>
                     ))}
+                    {loadingProductos && (
+                      <div className="text-sm text-muted-foreground">Cargando productos…</div>
+                    )}
+                    {!loadingProductos && productosPopulares.length === 0 && (
+                      <div className="text-sm text-muted-foreground">No hay productos populares.</div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -302,7 +507,7 @@ export default function DashboardTiendaPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4">
-                      {dashboardData.ventasPorMes.map((mes) => (
+                      {ventasPorMes.map((mes) => (
                         <div key={mes.mes} className="flex items-center justify-between">
                           <span className="text-sm font-medium">{mes.mes}</span>
                           <div className="flex items-center gap-3 flex-1 ml-4">
@@ -311,6 +516,9 @@ export default function DashboardTiendaPage() {
                           </div>
                         </div>
                       ))}
+                      {(loadingVentas || loadingAnaliticas) && (
+                        <div className="text-sm text-muted-foreground">Cargando analíticas…</div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -323,26 +531,38 @@ export default function DashboardTiendaPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Tasa de conversión</span>
-                      <span className="font-semibold">3.2%</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Valor promedio del pedido</span>
-                      <span className="font-semibold">{formatearPrecioParaguayo(8700000)}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Tiempo promedio de entrega</span>
-                      <span className="font-semibold">2.3 días</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Productos devueltos</span>
-                      <span className="font-semibold">1.8%</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Satisfacción del cliente</span>
-                      <span className="font-semibold">96%</span>
-                    </div>
+                    {analiticas ? (
+                      <>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Tasa de conversión</span>
+                          <span className="font-semibold">{typeof analiticas?.conversion?.tasa_conversion_por_usuario === 'number' ? `${analiticas.conversion.tasa_conversion_por_usuario.toFixed(1)}%` : '—'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Valor promedio del pedido</span>
+                          <span className="font-semibold">{
+                            typeof analiticas?.ordenes?.ingresos_tienda === 'number' && typeof analiticas?.ordenes?.total === 'number' && analiticas.ordenes.total > 0
+                              ? formatearPrecioParaguayo(Math.round(analiticas.ordenes.ingresos_tienda / analiticas.ordenes.total))
+                              : '—'
+                          }</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Tiempo promedio de entrega</span>
+                          <span className="font-semibold">{typeof analiticas?.ordenes?.tiempo_promedio_entrega_horas === 'number' ? `${analiticas.ordenes.tiempo_promedio_entrega_horas.toFixed(1)} h` : '—'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Satisfacción del cliente</span>
+                          <span className="font-semibold">{typeof analiticas?.satisfaccion?.promedio_calificacion === 'number' ? `${analiticas.satisfaccion.promedio_calificacion.toFixed(1)}/5 (${analiticas.satisfaccion?.total_resenas ?? 0})` : '—'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Ingresos del periodo</span>
+                          <span className="font-semibold">{formatearPrecioParaguayo(typeof analiticas?.ordenes?.ingresos_tienda === 'number' ? analiticas.ordenes.ingresos_tienda : 0)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">
+                        {loadingAnaliticas ? "Cargando analíticas…" : "No hay datos de analíticas disponibles"}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>

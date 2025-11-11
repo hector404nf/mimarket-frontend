@@ -25,7 +25,8 @@ export default function ProductList() {
   const busquedaParam = searchParams.get("busqueda")
   const tipoVentaParam = searchParams.get("tipoVenta") // Para compatibilidad con enlaces existentes
   const tiposVentaParam = searchParams.get("tiposVenta") // Para múltiples tipos de venta
-  const marcasParam = searchParams.get("marcas")
+  // Filtro por tienda (marca)
+  const tiendaParam = searchParams.get("tienda")
   const precioMinParam = searchParams.get("precio_min")
   const precioMaxParam = searchParams.get("precio_max")
 
@@ -33,9 +34,15 @@ export default function ProductList() {
   const filters = {
     search: busquedaParam || undefined,
     categoria: categoriaParam || categoriasParam || undefined,
+    tienda: tiendaParam || undefined,
     sort_by: 'fecha_creacion' as const,
     sort_order: 'desc' as const,
     per_page: 20,
+    // Tipo de venta desde la URL
+    ...(tiposVentaParam ? { tiposVenta: tiposVentaParam.split(',') as Array<'directa'|'pedido'|'delivery'> } : {}),
+    ...(tipoVentaParam ? { tipoVenta: tipoVentaParam as 'directa'|'pedido'|'delivery' } : {}),
+    ...(precioMinParam ? { precio_min: parseInt(precioMinParam) } : {}),
+    ...(precioMaxParam ? { precio_max: parseInt(precioMaxParam) } : {}),
   }
 
   const { productos: productosFiltrados, loading, error, pagination, refetch } = useProductos(filters)
@@ -48,12 +55,17 @@ export default function ProductList() {
     const newFilters = {
       search: busquedaParam || undefined,
       categoria: categoriaParam || categoriasParam || undefined,
+      tienda: tiendaParam || undefined,
       sort_by: 'fecha_creacion' as const,
       sort_order: 'desc' as const,
       per_page: 20,
+      ...(tiposVentaParam ? { tiposVenta: tiposVentaParam.split(',') as Array<'directa'|'pedido'|'delivery'> } : {}),
+      ...(tipoVentaParam ? { tipoVenta: tipoVentaParam as 'directa'|'pedido'|'delivery' } : {}),
+      ...(precioMinParam ? { precio_min: parseInt(precioMinParam) } : {}),
+      ...(precioMaxParam ? { precio_max: parseInt(precioMaxParam) } : {}),
     }
     refetch(newFilters)
-  }, [categoriaParam, categoriasParam, busquedaParam, tipoVentaParam, tiposVentaParam, marcasParam, precioMinParam, precioMaxParam])
+  }, [categoriaParam, categoriasParam, busquedaParam, tipoVentaParam, tiposVentaParam, tiendaParam, precioMinParam, precioMaxParam])
 
   const getTipoVentaInfo = (tipoVenta?: string) => {
     switch (tipoVenta) {

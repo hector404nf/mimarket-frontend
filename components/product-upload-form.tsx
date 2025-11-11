@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { Upload, X, Camera, AlertCircle } from "lucide-react"
@@ -15,7 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "@/components/ui/use-toast"
-import { categorias, marcas } from "@/lib/data"
+import { marcas } from "@/lib/data"
+import { categoriasService } from "@/lib/api/categorias"
+import { productosService } from "@/lib/api/productos"
+import { useProfileType } from "@/hooks/use-profile-type"
 
 interface ImageFile {
   file: File
@@ -28,12 +31,14 @@ export default function ProductUploadForm() {
   const [loading, setLoading] = useState(false)
   const [imagenes, setImagenes] = useState<ImageFile[]>([])
   const [dragActive, setDragActive] = useState(false)
+  const [categoriasList, setCategoriasList] = useState<{ id: number; nombre: string }[]>([])
+  const [categoriasLoading, setCategoriasLoading] = useState(true)
 
   const [formData, setFormData] = useState({
     nombre: "",
     descripcion: "",
     precio: "",
-    categoria: "",
+    categoriaId: "",
     marca: "",
     tipoVenta: "",
     stock: "",
@@ -41,6 +46,8 @@ export default function ProductUploadForm() {
     descuento: "0",
     tags: "",
   })
+
+  const { storeInfo } = useProfileType()
 
   const maxImagenes = 8
   const maxTamañoMB = 5
@@ -97,6 +104,27 @@ export default function ProductUploadForm() {
     }
   }
 
+  // Cargar categorías reales del backend
+  useEffect(() => {
+    const fetchCategorias = async () => {
+      try {
+        setCategoriasLoading(true)
+        const data = await categoriasService.getCategorias()
+        setCategoriasList(data.map(c => ({ id: c.id, nombre: c.nombre })))
+      } catch (err: any) {
+        console.error("Error cargando categorías", err)
+        toast({
+          title: "Error al cargar categorías",
+          description: err?.message || "No se pudieron cargar las categorías",
+          variant: "destructive",
+        })
+      } finally {
+        setCategoriasLoading(false)
+      }
+    }
+    fetchCategorias()
+  }, [])
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -148,7 +176,7 @@ export default function ProductUploadForm() {
       return
     }
 
-    if (!formData.nombre || !formData.descripcion || !formData.precio || !formData.categoria) {
+    if (!formData.nombre || !formData.descripcion || !formData.precio || !formData.categoriaId) {
       toast({
         title: "Error",
         description: "Por favor completa todos los campos obligatorios",
@@ -160,30 +188,45 @@ export default function ProductUploadForm() {
     setLoading(true)
 
     try {
-      // Simular subida de imágenes
-      const imagenesUrls = imagenes.map(
-        (_, index) => `/placeholder.svg?height=400&width=400&text=Producto+${formData.nombre}+${index + 1}`,
-      )
+      const categoriaIdNum = Number(formData.categoriaId)
+      const categoriaSeleccionada = categoriasList.find(c => c.id === categoriaIdNum)
+      const descuentoNum = Number.parseInt(formData.descuento) || 0
+      const precioNum = Number.parseFloat(formData.precio)
+      const precioOferta = descuentoNum > 0 ? Number((precioNum * (1 - descuentoNum / 100)).toFixed(2)) : undefined
 
       const nuevoProducto = {
-        ...formData,
-        precio: Number.parseFloat(formData.precio),
+        id_producto: 0,
+        nombre: formData.nombre,
+        descripcion: formData.descripcion,
+        precio: precioNum,
+        precio_oferta: precioOferta,
+        categoria: categoriaSeleccionada?.nombre || "",
+        marca: formData.marca || undefined,
+        imagenes: [],
+        tipoVenta: (formData.tipoVenta || "directa") as any,
         stock: Number.parseInt(formData.stock) || 0,
-        descuento: Number.parseInt(formData.descuento) || 0,
-        imagenes: imagenesUrls,
-        imagen: imagenesUrls[0], // Primera imagen como principal para compatibilidad
+        tiempoEntrega: formData.tiempoEntrega || undefined,
+        tiendaId: storeInfo?.id || 0,
+        rating: 0,
         tags: formData.tags
           .split(",")
           .map((tag) => tag.trim())
           .filter(Boolean),
       }
 
-      // Simular API call
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      const imagenPrincipal = imagenes[0]?.file
+      const imagenesGaleria = imagenes.slice(1).map((img) => img.file)
+
+      const response = await productosService.createProducto(
+        nuevoProducto,
+        imagenPrincipal,
+        imagenesGaleria,
+        categoriaIdNum
+      )
 
       toast({
         title: "¡Producto creado!",
-        description: "Tu producto ha sido publicado exitosamente",
+        description: `Tu producto "${response.data.nombre}" ha sido publicado exitosamente`,
       })
 
       router.push("/dashboard-tienda/productos")
@@ -211,7 +254,7 @@ export default function ProductUploadForm() {
         <CardContent className="space-y-4">
           {/* Zona de subida */}
           <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+            className={`relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
               dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
             }`}
             onDragEnter={handleDrag}
@@ -232,7 +275,7 @@ export default function ProductUploadForm() {
               multiple
               accept="image/*"
               onChange={handleFileSelect}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
             />
           </div>
 
@@ -371,14 +414,14 @@ export default function ProductUploadForm() {
 
             <div className="space-y-2">
               <Label htmlFor="categoria">Categoría *</Label>
-              <Select value={formData.categoria} onValueChange={(value) => handleInputChange("categoria", value)}>
+              <Select value={formData.categoriaId} onValueChange={(value) => handleInputChange("categoriaId", value)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecciona categoría" />
+                  <SelectValue placeholder={categoriasLoading ? "Cargando categorías..." : "Selecciona categoría"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {categorias.map((categoria) => (
-                    <SelectItem key={categoria} value={categoria}>
-                      {categoria}
+                  {categoriasList.map((cat) => (
+                    <SelectItem key={cat.id} value={String(cat.id)}>
+                      {cat.nombre}
                     </SelectItem>
                   ))}
                 </SelectContent>

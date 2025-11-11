@@ -9,22 +9,37 @@ export interface NLPAnalysis {
 
 export class NLPEngine {
   private categoryKeywords = {
-    tecnología: ["teléfono", "celular", "móvil", "laptop", "computadora", "tablet", "auriculares", "cargador", "cable"],
-    ropa: ["camisa", "pantalón", "vestido", "zapatos", "zapatillas", "chaqueta", "abrigo", "ropa"],
-    hogar: ["muebles", "decoración", "cocina", "baño", "sala", "dormitorio", "jardín"],
-    deportes: ["deportivo", "ejercicio", "gym", "fitness", "pelota", "bicicleta"],
-    comida: ["pizza", "hamburguesa", "comida", "restaurante", "delivery", "almuerzo", "cena"],
+    tecnología: [
+      "telefono", "teléfono", "cel", "celular", "movil", "móvil", "smartphone",
+      "laptop", "notebook", "computadora", "pc", "tablet",
+      "auriculares", "audifonos", "audífonos", "cargador", "cable",
+      "monitor", "teclado", "mouse"
+    ],
+    ropa: [
+      "camisa", "remera", "playera", "polera", "pantalon", "pantalón", "jeans",
+      "vestido", "zapatos", "zapatillas", "tenis", "chaqueta", "abrigo", "ropa", "medias", "calcetines"
+    ],
+    hogar: [
+      "muebles", "decoracion", "decoración", "cocina", "baño", "bano", "sala", "dormitorio", "jardin", "jardín",
+      "electrodomestico", "electrodoméstico", "heladera", "refrigerador", "microondas", "lavarropas", "lavadora", "licuadora"
+    ],
+    deportes: [
+      "deportivo", "ejercicio", "gym", "fitness", "pelota", "balon", "balón", "bicicleta", "raqueta", "botines"
+    ],
+    comida: [
+      "pizza", "hamburguesa", "comida", "restaurante", "delivery", "almuerzo", "cena", "comida rapida", "rápida", "pedido"
+    ],
     libros: ["libro", "novela", "educativo", "lectura", "estudio"],
-    juguetes: ["juguete", "niños", "bebé", "infantil", "juego"],
-    belleza: ["maquillaje", "perfume", "crema", "belleza", "cuidado", "cosmético"],
+    juguetes: ["juguete", "niños", "ninos", "bebé", "bebe", "infantil", "juego"],
+    belleza: ["maquillaje", "perfume", "crema", "belleza", "cuidado", "cosmetico", "cosmético", "skincare"],
   }
 
   private intentKeywords = {
-    buy: ["comprar", "necesito", "quiero", "busco", "vender"],
-    compare: ["comparar", "diferencia", "mejor", "vs", "versus"],
+    buy: ["comprar", "comprame", "adquirir", "necesito", "quiero", "busco", "ordenar", "solicitar", "vender"],
+    compare: ["comparar", "comparativa", "diferencia", "mejor", "vs", "versus", "mejor que"],
     browse: ["ver", "mostrar", "explorar", "navegar"],
-    price: ["precio", "costo", "barato", "económico", "oferta", "descuento"],
-    info: ["información", "detalles", "características", "especificaciones"],
+    price: ["precio", "costo", "barato", "barata", "economico", "económico", "oferta", "promo", "promocion", "promoción", "rebaja", "descuento"],
+    info: ["informacion", "información", "detalles", "caracteristicas", "características", "especificaciones"],
   }
 
   private urgencyKeywords = {
@@ -34,9 +49,9 @@ export class NLPEngine {
   }
 
   private saleTypeKeywords = {
-    directa: ["inmediato", "stock", "disponible", "ahora"],
-    pedido: ["pedido", "encargar", "hacer", "personalizado"],
-    delivery: ["delivery", "entrega", "domicilio", "envío"],
+    directa: ["inmediato", "stock", "disponible", "ahora", "retiro", "en tienda", "pickup"],
+    pedido: ["pedido", "encargar", "encargo", "preorden", "hacer", "personalizado"],
+    delivery: ["delivery", "entrega", "domicilio", "envio", "envío", "a domicilio", "enviar"],
   }
 
   analyze(text: string): NLPAnalysis {
@@ -101,20 +116,48 @@ export class NLPEngine {
   }
 
   private extractPriceRange(text: string): { min?: number; max?: number } | null {
-    const priceRegex = /₲\s?(\d+(?:[.,]\d{3})*)/g
-    const matches = text.match(priceRegex)
+    // Normalizar posibles prefijos de moneda
+    const t = text.replace(/₲|gs\.?|pyg|guaranies?|g\$/gi, "")
 
-    if (!matches) return null
+    const parseTokenToNumber = (raw: string): number | null => {
+      const cleaned = raw.trim().toLowerCase()
+      const unitMatch = cleaned.match(/(mil|millon(?:es)?)/)
+      const numMatch = cleaned.match(/[\d.,]+/)
+      if (!numMatch) return null
+      const base = Number.parseFloat(numMatch[0].replace(/\./g, "").replace(/,/g, ""))
+      if (!Number.isFinite(base)) return null
+      if (!unitMatch) return base
+      const unit = unitMatch[1]
+      if (unit.startsWith("mil")) return base * 1_000
+      return base * 1_000_000
+    }
 
-    const prices = matches.map((match) => Number.parseFloat(match.replace("₲", "").replace(/[.,]/g, "")))
+    // Rango "entre X y Y" o "de X a Y"
+    const rangeMatch = t.match(/(?:entre|de)\s*([\d.,]+\s*(?:mil|millon(?:es)?)?)\s*(?:y|a)\s*([\d.,]+\s*(?:mil|millon(?:es)?)?)/)
+    if (rangeMatch) {
+      const a = parseTokenToNumber(rangeMatch[1]!)
+      const b = parseTokenToNumber(rangeMatch[2]!)
+      if (a != null && b != null) {
+        return { min: Math.min(a, b), max: Math.max(a, b) }
+      }
+    }
+
+    // Extraer todos los números posibles
+    const tokens = Array.from(t.matchAll(/[\d.,]+\s*(?:mil|millon(?:es)?)?/g)).map((m) => m[0])
+    const prices = tokens
+      .map(parseTokenToNumber)
+      .filter((n): n is number => n != null)
+
+    if (prices.length === 0) return null
+
+    // Patrones de límite
+    const maxHints = ["menos de", "maximo", "máximo", "hasta", "tope", "barato"]
+    const minHints = ["mas de", "más de", "desde", "minimo", "mínimo", "mayor a"]
 
     if (prices.length === 1) {
-      if (text.includes("menos de") || text.includes("máximo")) {
-        return { max: prices[0] }
-      }
-      if (text.includes("más de") || text.includes("mínimo")) {
-        return { min: prices[0] }
-      }
+      const value = prices[0]
+      if (maxHints.some((h) => t.includes(h))) return { max: value }
+      if (minHints.some((h) => t.includes(h))) return { min: value }
     }
 
     if (prices.length >= 2) {

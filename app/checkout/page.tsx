@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
-import dynamic from "next/dynamic"
+// Importación estática para evitar errores de carga de chunks
+import MapSelector from "@/components/map-selector"
 import { ArrowLeft, CreditCard, Truck, MapPin, User, Package, Store, CheckCircle } from "lucide-react"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
@@ -18,20 +19,14 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { useCart } from "@/lib/cart-store"
 import { useCheckout } from "@/lib/use-checkout"
+import { metodosPagoService, MetodoPagoBackend } from "@/lib/api/metodos-pago"
+import { useAuth } from "@/contexts/auth-context"
 import { toast } from "@/components/ui/use-toast"
 import { getDeliveryPriceForLocation } from "@/lib/delivery-zone-detector"
 import { formatearPrecioParaguayo } from "@/lib/utils"
 import PremiumServices from "@/components/premium-services"
 
-// Importar el mapa dinámicamente para evitar problemas de SSR
-const MapSelector = dynamic(() => import("@/components/map-selector"), {
-  ssr: false,
-  loading: () => (
-    <div className="h-64 bg-muted rounded-lg animate-pulse flex items-center justify-center">
-      <p className="text-muted-foreground">Cargando mapa...</p>
-    </div>
-  ),
-})
+// Nota: Renderizamos condicionalmente según isMounted para evitar problemas de SSR
 
 interface Address {
   street: string
@@ -66,6 +61,7 @@ export default function CheckoutPage() {
   const router = useRouter()
   const { getCartProducts, getTotalPrice, clearCart, getGroupedByStore } = useCart()
   const { processCheckout, calculateTotals, totals, isLoading } = useCheckout()
+  const { isAuthenticated, user } = useAuth()
   const [step, setStep] = useState(1)
   const [codigoCupon, setCodigoCupon] = useState("")
   const [isMounted, setIsMounted] = useState(false)
@@ -78,6 +74,10 @@ export default function CheckoutPage() {
   })
 
   const [paymentMethod, setPaymentMethod] = useState("")
+  const [savedMethods, setSavedMethods] = useState<MetodoPagoBackend[]>([])
+  const [loadingMethods, setLoadingMethods] = useState(false)
+  const [methodsError, setMethodsError] = useState<string>("")
+  const [selectedMetodoId, setSelectedMetodoId] = useState<number | null>(null)
   const [storeDeliveryMethods, setStoreDeliveryMethods] = useState<StoreDeliveryMethod[]>([])
   const [deliveryMethod, setDeliveryMethod] = useState("")
   const [selectedPremiumServices, setSelectedPremiumServices] = useState<string[]>([])
@@ -183,6 +183,28 @@ export default function CheckoutPage() {
     }
   }, [cartProducts, router, isMounted])
 
+  // Cargar métodos de pago guardados del usuario
+  useEffect(() => {
+    const fetchSavedMethods = async () => {
+      if (!isAuthenticated || !user?.id) return
+      setLoadingMethods(true)
+      setMethodsError("")
+      try {
+        const data = await metodosPagoService.getByUsuario(user.id)
+        const tarjetas = data.filter((m) => m.tipo === 'tarjeta')
+        setSavedMethods(tarjetas)
+        const defaultCard = tarjetas.find((m) => m.predeterminada)
+        setSelectedMetodoId(defaultCard ? defaultCard.id_metodo : null)
+      } catch (err) {
+        console.error('Error cargando métodos guardados:', err)
+        setMethodsError('No se pudieron cargar tus métodos de pago')
+      } finally {
+        setLoadingMethods(false)
+      }
+    }
+    fetchSavedMethods()
+  }, [isAuthenticated, user?.id])
+
   // Función para aplicar cupón
   const handleApplyCoupon = async () => {
     if (codigoCupon.trim()) {
@@ -228,7 +250,7 @@ export default function CheckoutPage() {
           ? "efectivo"
           : paymentMethod === "transfer"
           ? "transferencia"
-          : paymentMethod || "efectivo"
+          : "efectivo"
 
       // Serializar dirección si es requerida
       const direccionEnvio = needsAddress && address
@@ -251,6 +273,7 @@ export default function CheckoutPage() {
         codigo_cupon: codigoCuponValor,
         latitud,
         longitud,
+        id_metodo_pago: selectedMetodoId || undefined,
       }
 
       const result = await processCheckout(checkoutData)
@@ -284,9 +307,11 @@ export default function CheckoutPage() {
         return customerInfo.name && customerInfo.email && customerInfo.phone
       case 2:
         if (paymentMethod === "card") {
-          return paymentMethod && cardData.cardNumber && cardData.expiryDate && cardData.cvv && cardData.cardholderName
+          const hasSaved = !!selectedMetodoId
+          const hasManual = cardData.cardNumber && cardData.expiryDate && cardData.cvv && cardData.cardholderName
+          return !!paymentMethod && (hasSaved || hasManual)
         }
-        return paymentMethod
+        return !!paymentMethod
       case 3:
         const allStoresHaveMethod = storeDeliveryMethods.length === gruposPorTienda.length &&
           storeDeliveryMethods.every(method => method.metodo !== "")
@@ -470,55 +495,94 @@ export default function CheckoutPage() {
                         </div>
                       </RadioGroup>
 
-                      {/* Campos de tarjeta - solo se muestran si se selecciona tarjeta */}
+                      {/* Métodos guardados y datos de tarjeta */}
                       {paymentMethod === "card" && (
                         <div className="mt-6 p-4 border rounded-lg bg-muted/50">
-                          <h4 className="font-medium mb-4">Datos de la tarjeta</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="md:col-span-2">
-                              <Label htmlFor="cardNumber">Número de tarjeta</Label>
-                              <Input
-                                id="cardNumber"
-                                type="text"
-                                value={cardData.cardNumber}
-                                onChange={(e) => setCardData((prev) => ({ ...prev, cardNumber: e.target.value }))}
-                                placeholder="1234 5678 9012 3456"
-                                maxLength={19}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="expiryDate">Fecha de vencimiento</Label>
-                              <Input
-                                id="expiryDate"
-                                type="text"
-                                value={cardData.expiryDate}
-                                onChange={(e) => setCardData((prev) => ({ ...prev, expiryDate: e.target.value }))}
-                                placeholder="MM/AA"
-                                maxLength={5}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="cvv">CVV</Label>
-                              <Input
-                                id="cvv"
-                                type="text"
-                                value={cardData.cvv}
-                                onChange={(e) => setCardData((prev) => ({ ...prev, cvv: e.target.value }))}
-                                placeholder="123"
-                                maxLength={4}
-                              />
-                            </div>
-                            <div className="md:col-span-2">
-                              <Label htmlFor="cardholderName">Nombre del titular</Label>
-                              <Input
-                                id="cardholderName"
-                                type="text"
-                                value={cardData.cardholderName}
-                                onChange={(e) => setCardData((prev) => ({ ...prev, cardholderName: e.target.value }))}
-                                placeholder="Juan Pérez"
-                              />
-                            </div>
-                          </div>
+                          <h4 className="font-medium mb-4">Selecciona una tarjeta</h4>
+                          {loadingMethods && (
+                            <p className="text-sm text-muted-foreground">Cargando métodos de pago...</p>
+                          )}
+                          {methodsError && !loadingMethods && (
+                            <p className="text-sm text-red-600">{methodsError}</p>
+                          )}
+                          {savedMethods.length > 0 && (
+                            <RadioGroup value={selectedMetodoId ? String(selectedMetodoId) : "new"} onValueChange={(val) => setSelectedMetodoId(val === 'new' ? null : Number(val))}>
+                              <div className="space-y-3">
+                                {savedMethods.map((m) => (
+                                  <div key={m.id_metodo} className="flex items-center space-x-2 p-3 border rounded-lg">
+                                    <RadioGroupItem value={String(m.id_metodo)} id={`card-${m.id_metodo}`} />
+                                    <Label htmlFor={`card-${m.id_metodo}`} className="flex items-center gap-2 flex-1 cursor-pointer">
+                                      <CreditCard className="h-4 w-4" />
+                                      <div>
+                                        <p className="font-medium">**** **** **** {m.terminacion}</p>
+                                        <p className="text-sm text-muted-foreground">{m.nombre_titular} - Expira {String(m.mes_venc || '')}/{String(m.anio_venc || '').slice(-2)}</p>
+                                      </div>
+                                    </Label>
+                                    {m.predeterminada && (
+                                      <Badge variant="secondary" className="text-xs">Principal</Badge>
+                                    )}
+                                  </div>
+                                ))}
+                                <div className="flex items-center space-x-2 p-3 border rounded-lg">
+                                  <RadioGroupItem value="new" id="card-new" />
+                                  <Label htmlFor="card-new" className="flex items-center gap-2 flex-1 cursor-pointer">
+                                    <div className="h-4 w-4 bg-slate-600 rounded-sm" />
+                                    Usar nueva tarjeta
+                                  </Label>
+                                </div>
+                              </div>
+                            </RadioGroup>
+                          )}
+                          {!selectedMetodoId && (
+                            <>
+                              <h4 className="font-medium mb-4 mt-6">Datos de la nueva tarjeta</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="md:col-span-2">
+                                  <Label htmlFor="cardNumber">Número de tarjeta</Label>
+                                  <Input
+                                    id="cardNumber"
+                                    type="text"
+                                    value={cardData.cardNumber}
+                                    onChange={(e) => setCardData((prev) => ({ ...prev, cardNumber: e.target.value }))}
+                                    placeholder="1234 5678 9012 3456"
+                                    maxLength={19}
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor="expiryDate">Fecha de vencimiento</Label>
+                                  <Input
+                                    id="expiryDate"
+                                    type="text"
+                                    value={cardData.expiryDate}
+                                    onChange={(e) => setCardData((prev) => ({ ...prev, expiryDate: e.target.value }))}
+                                    placeholder="MM/AA"
+                                    maxLength={5}
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor="cvv">CVV</Label>
+                                  <Input
+                                    id="cvv"
+                                    type="text"
+                                    value={cardData.cvv}
+                                    onChange={(e) => setCardData((prev) => ({ ...prev, cvv: e.target.value }))}
+                                    placeholder="123"
+                                    maxLength={4}
+                                  />
+                                </div>
+                                <div className="md:col-span-2">
+                                  <Label htmlFor="cardholderName">Nombre del titular</Label>
+                                  <Input
+                                    id="cardholderName"
+                                    type="text"
+                                    value={cardData.cardholderName}
+                                    onChange={(e) => setCardData((prev) => ({ ...prev, cardholderName: e.target.value }))}
+                                    placeholder="Juan Pérez"
+                                  />
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
 
@@ -720,10 +784,16 @@ export default function CheckoutPage() {
                             <p className="text-sm text-muted-foreground mb-2">
                               Selecciona tu ubicación exacta para una entrega más precisa
                             </p>
-                            <MapSelector
-                              onLocationSelect={handleLocationSelect}
-                              initialLocation={address.coordinates}
-                            />
+                            {isMounted ? (
+                              <MapSelector
+                                onLocationSelect={handleLocationSelect}
+                                initialLocation={address.coordinates}
+                              />
+                            ) : (
+                              <div className="h-64 bg-muted rounded-lg animate-pulse flex items-center justify-center">
+                                <p className="text-muted-foreground">Cargando mapa...</p>
+                              </div>
+                            )}
                           </div>
                         </CardContent>
                       </Card>

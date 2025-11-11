@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Bell, Check, CheckCheck, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,8 +25,28 @@ export default function NotificationsDropdown() {
     loading, 
     markAsRead, 
     markAllAsRead,
-    getUnreadNotifications 
+    getUnreadNotifications,
+    fetchNotifications,
   } = useNotifications()
+
+  // Normaliza URLs antiguas de notificaciones que apuntaban al dashboard
+  const normalizeNotificationUrl = (url: string) => {
+    if (!url) return url
+    return url.startsWith('/dashboard-tienda/productos/')
+      ? url.replace('/dashboard-tienda/productos/', '/productos/')
+      : url
+  }
+
+  // Actualizar la lista cuando se abre el dropdown
+  // para reflejar nuevas notificaciones más allá del polling del contador
+  // y evitar que solo se actualice el número.
+  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isOpen) {
+      fetchNotifications()
+    }
+  }, [isOpen])
 
   const handleNotificationClick = async (notification: Notification) => {
     if (!notification.leida) {
@@ -35,7 +55,8 @@ export default function NotificationsDropdown() {
     
     // Si tiene URL de acción, navegar
     if (notification.url_accion) {
-      window.location.href = notification.url_accion
+      const href = normalizeNotificationUrl(notification.url_accion)
+      window.location.href = href
     }
   }
 

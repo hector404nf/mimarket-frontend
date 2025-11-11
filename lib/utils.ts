@@ -12,7 +12,7 @@ export function cn(...inputs: ClassValue[]) {
  * @returns El precio formateado con el símbolo ₲
  */
 export function formatearPrecioParaguayo(precio: number): string {
-  // Convertir a string y agregar puntos como separadores de miles
-  const precioFormateado = precio.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-  return `₲${precioFormateado}`
+  const entero = Math.round(Number(precio) || 0)
+  const formato = new Intl.NumberFormat('es-PY', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(entero)
+  return `₲${formato}`
 }

@@ -14,8 +14,11 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
+import { subscribeUser, unsubscribeUser } from "@/lib/push"
+import { api } from "@/lib/axios"
 import MapSelector from "@/components/map-selector"
 import DeliveryZonesConfigurator from "@/components/delivery-zones-configurator"
+import { useStoreAccess, useProfileType } from "@/hooks/use-profile-type"
 
 interface DeliveryZone {
   id: string
@@ -98,7 +101,7 @@ const defaultConfig: StoreConfig = {
   acceptedPayments: ["credit_card", "debit_card", "paypal"],
   emailNotifications: true,
   smsNotifications: false,
-  pushNotifications: true,
+  pushNotifications: false,
 }
 
 const daysOfWeek = [
@@ -122,36 +125,29 @@ const paymentMethods = [
 
 export default function ConfiguracionTiendaPage() {
   const router = useRouter()
-  const [userProfile, setUserProfile] = useState<any>(null)
+  const { canAccessStoreDashboard } = useStoreAccess()
+  const { storeInfo } = useProfileType()
   const [config, setConfig] = useState<StoreConfig>(defaultConfig)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    // Cargar perfil del usuario
-    const profile = localStorage.getItem("userProfile")
-    if (profile) {
-      const parsedProfile = JSON.parse(profile)
-      setUserProfile(parsedProfile)
-
-      // Cargar configuración existente si existe
-      const existingConfig = localStorage.getItem("storeConfig")
-      if (existingConfig) {
-        setConfig({ ...defaultConfig, ...JSON.parse(existingConfig) })
-      } else if (parsedProfile.storeInfo) {
-        // Usar datos del perfil como base
-        setConfig((prev) => ({
-          ...prev,
-          storeName: parsedProfile.storeInfo.storeName || "",
-          description: parsedProfile.storeInfo.description || "",
-          category: parsedProfile.storeInfo.category || "",
-          phone: parsedProfile.storeInfo.phone || "",
-          email: parsedProfile.storeInfo.email || "",
-          address: parsedProfile.storeInfo.address || "",
-          coordinates: parsedProfile.storeInfo.coordinates || [40.4168, -3.7038],
-        }))
-      }
+    // Cargar configuración existente si existe
+    const existingConfig = localStorage.getItem("storeConfig")
+    if (existingConfig) {
+      setConfig({ ...defaultConfig, ...JSON.parse(existingConfig) })
+      return
     }
-  }, [])
+    // Usar datos del perfil de tienda del usuario autenticado
+    if (storeInfo) {
+      setConfig((prev) => ({
+        ...prev,
+        storeName: storeInfo.nombre || "",
+        description: storeInfo.descripcion || "",
+        category: storeInfo.categoria || "",
+        // Mantener contacto/dirección por defecto si no hay en store_info
+      }))
+    }
+  }, [storeInfo])
 
   const handleSave = async () => {
     setIsLoading(true)
@@ -162,25 +158,6 @@ export default function ConfiguracionTiendaPage() {
 
       // Guardar configuración
       localStorage.setItem("storeConfig", JSON.stringify(config))
-
-      // Actualizar perfil del usuario con la nueva información
-      if (userProfile) {
-        const updatedProfile = {
-          ...userProfile,
-          storeInfo: {
-            ...userProfile.storeInfo,
-            storeName: config.storeName,
-            description: config.description,
-            category: config.category,
-            phone: config.phone,
-            email: config.email,
-            address: config.address,
-            coordinates: config.coordinates,
-          },
-        }
-        localStorage.setItem("userProfile", JSON.stringify(updatedProfile))
-        setUserProfile(updatedProfile)
-      }
 
       toast({
         title: "Configuración guardada",
@@ -206,7 +183,34 @@ export default function ConfiguracionTiendaPage() {
     }))
   }
 
-  if (!userProfile || userProfile.type !== "store") {
+  const handlePushNotificationsChange = async (checked: boolean) => {
+    try {
+      if (checked) {
+        await subscribeUser('dashboard')
+        setConfig((prev) => ({ ...prev, pushNotifications: true }))
+        toast({ title: 'Push habilitado', description: 'Suscripción creada correctamente' })
+      } else {
+        await unsubscribeUser()
+        setConfig((prev) => ({ ...prev, pushNotifications: false }))
+        toast({ title: 'Push deshabilitado', description: 'Suscripción cancelada' })
+      }
+    } catch (error: any) {
+      console.error('[Push] Error cambiando estado de notificaciones:', error)
+      toast({ title: 'Error con notificaciones push', description: error?.message || 'No se pudo cambiar el estado', variant: 'destructive' })
+    }
+  }
+
+  const handleSendPushTest = async () => {
+    try {
+      await api.post('/v1/push/send-test', { url: '/dashboard-tienda/notificaciones' })
+      toast({ title: 'Push de prueba enviado', description: 'Revisa la notificación del navegador' })
+    } catch (error: any) {
+      const message = error?.message || (error?.errors ? Object.values(error.errors).join('\n') : 'No se pudo enviar el push de prueba')
+      toast({ title: 'Error enviando push de prueba', description: message, variant: 'destructive' })
+    }
+  }
+
+  if (!canAccessStoreDashboard) {
     return (
       <div className="flex min-h-screen flex-col">
         <Navbar />
@@ -214,7 +218,7 @@ export default function ConfiguracionTiendaPage() {
           <div className="text-center">
             <h1 className="text-2xl font-bold mb-2">Acceso denegado</h1>
             <p className="text-muted-foreground mb-4">Esta página es solo para tiendas</p>
-            <Button onClick={() => router.push("/")}>Volver al inicio</Button>
+            <Button onClick={() => router.push("/onboarding")}>Configurar perfil de tienda</Button>
           </div>
         </main>
         <Footer />
@@ -633,8 +637,14 @@ export default function ConfiguracionTiendaPage() {
                       </div>
                       <Switch
                         checked={config.pushNotifications}
-                        onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, pushNotifications: checked }))}
+                        onCheckedChange={handlePushNotificationsChange}
                       />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">Puedes enviar una notificación de prueba para verificar la configuración</p>
+                      <Button variant="outline" onClick={handleSendPushTest} disabled={!config.pushNotifications}>
+                        Enviar push de prueba
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>

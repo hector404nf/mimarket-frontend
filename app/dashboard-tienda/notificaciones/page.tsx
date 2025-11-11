@@ -39,6 +39,14 @@ export default function NotificacionesPage() {
     getUnreadCount 
   } = useNotifications()
 
+  // Normaliza URLs antiguas del dashboard para productos hacia la ruta pública
+  const normalizeNotificationUrl = (url: string) => {
+    if (!url) return url
+    return url.startsWith('/dashboard-tienda/productos/')
+      ? url.replace('/dashboard-tienda/productos/', '/productos/')
+      : url
+  }
+
   useEffect(() => {
     loadNotifications()
   }, [filter])
@@ -91,7 +99,8 @@ export default function NotificacionesPage() {
 
     // Navegar a la URL de acción si existe
     if (notification.url_accion) {
-      router.push(notification.url_accion)
+      const href = normalizeNotificationUrl(notification.url_accion)
+      router.push(href)
     }
   }
 

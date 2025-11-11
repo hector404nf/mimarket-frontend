@@ -5,7 +5,7 @@ Este documento resume qué datos del dashboard de tienda están conectados al ba
 ## Contexto de autenticación y sesión
 - El frontend usa `AuthContext` para gestionar sesión y cargar el usuario vía `GET /auth/me`.
 - El tipo `User` incluye `profile_type`, `has_store` y `store_info` (id, nombre, descripción, categoría). Si el usuario tiene tienda, se habilitan las rutas bajo `dashboard-tienda`.
-- Requisito de entorno: `NEXT_PUBLIC_API_URL` debe apuntar a `http://localhost:8001/api` (incluye `/api`). Las rutas usan versión `/v1`.
+- Requisito de entorno: `NEXT_PUBLIC_API_URL` debe apuntar al origen del backend SIN `'/api'` (ej.: `http://localhost:8010`). El cliente Axios añade `'/api'` automáticamente. Si no defines `NEXT_PUBLIC_API_URL`, se usa el proxy de `next.config.mjs` controlado por `API_PORT`.
 
 ## Conectado al backend (datos reales)
 - Notificaciones (usuario y tienda):
@@ -15,6 +15,9 @@ Este documento resume qué datos del dashboard de tienda están conectados al ba
 - Resolución de nombre de tienda en pedidos del usuario:
   - Se prioriza `producto.tienda?.nombre_tienda`; si sólo hay `id_tienda`, se consulta `GET /api/v1/tiendas/{id}`; fallback "Tienda {id}".
   - Impacta la vista de pedidos de usuario (`/perfil/pedidos/{id}`) y componentes relacionados.
+- Página pública de tienda (`app/tiendas/[id]/page.tsx`):
+  - Conectada al backend. Obtiene la tienda vía `GET /api/v1/tiendas/{id}` y sus productos vía `GET /api/v1/productos/tienda/{tiendaId}`.
+  - Usa `lib/api/tiendas.ts` (TiendasService) y `lib/api/productos.ts` (ProductosService) con mapeo a tipos del frontend.
 
 ## Parcialmente conectado o disponible en librerías (pero no usado en UI)
 - Productos por tienda:
@@ -33,9 +36,7 @@ Este documento resume qué datos del dashboard de tienda están conectados al ba
 - Configuración de tienda (`app/dashboard-tienda/configuracion/page.tsx`):
   - La UI define opciones (email/SMS/push), pero falta conectar persistencia.
   - Endpoints de tienda disponibles: `PUT /api/v1/tiendas/{tiendaId}`, `POST /api/v1/tiendas` y toggles (`PATCH /api/v1/tiendas/{tiendaId}/deactivate`, `POST /api/v1/tiendas/{tiendaId}/toggle-status`).
-- Página pública de tienda (`app/tiendas/[id]/page.tsx`):
-  - Usa datos simulados (`@/lib/stores-data` y `@/lib/data`).
-  - Conectar a `GET /api/v1/tiendas/{id}` y `GET /api/v1/tiendas/{id}/productos`.
+ 
 
 ## Endpoints relevantes existentes en backend
 - Autenticación: `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`.
@@ -47,17 +48,17 @@ Este documento resume qué datos del dashboard de tienda están conectados al ba
 - Notificaciones: ver sección "Conectado al backend".
 
 ## Requisitos y configuración
-- Variable `NEXT_PUBLIC_API_URL` debe incluir `/api` y apuntar al host del backend (por defecto `http://localhost:8001/api`).
-- El cliente HTTP central de Axios debe adjuntar el token (Sanctum) para rutas protegidas.
-- Revisar `.env` del frontend para URLs y `.env` del backend para base de datos y CORS.
+- Define `NEXT_PUBLIC_API_URL` con el origen del backend SIN `'/api'` (por ejemplo `http://localhost:8010`). El cliente Axios añadirá `'/api'` si hace falta. Alternativamente, omítela y configura `API_PORT` en `next.config.mjs` para el proxy local.
+- El cliente HTTP central de Axios adjunta automáticamente el token (Sanctum) para rutas protegidas.
+- Revisa `.env` del frontend para URLs y `.env` del backend para base de datos, CORS y claves VAPID.
 
 ## Próximos pasos recomendados (prioridad sugerida)
 1. Conectar `productos/page.tsx` al servicio real (`ProductosService.getByTienda`).
-2. Conectar la página pública `tiendas/[id]` a `GET tiendas/{id}` y `GET tiendas/{id}/productos`.
+2. Conectar la página pública `tiendas/[id]` a `GET tiendas/{id}` y `GET tiendas/{id}/productos`. (COMPLETADO)
 3. Implementar pedidos de tienda: nueva ruta backend por tienda o agregación en frontend con detalles de órdenes.
 4. Conectar el dashboard a `comisiones` para métricas clave (ingresos, comisiones, rendimiento).
 5. Persistir la configuración de notificaciones y de tienda vía `PUT /api/v1/tiendas/{tiendaId}`.
 6. Derivar y listar clientes desde órdenes y/o mensajes.
 
 ---
-Actualizado para entorno local: `http://localhost:8001` con rutas bajo `/api/v1`.
+Actualizado para entorno local: usa `http://localhost:8010` (o ajusta `API_PORT`) con rutas bajo `/api/v1`.

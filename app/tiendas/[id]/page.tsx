@@ -9,27 +9,60 @@ import Footer from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { tiendas } from "@/lib/stores-data"
-import { productos } from "@/lib/data"
 import ReviewsSection from "@/components/reviews-section"
-import { useBehaviorTracking } from "@/hooks/use-behavior-tracking"
+import { BehaviorTracker } from "@/lib/behavior-tracker"
 import RecommendationsSection from "@/components/recommendations-section"
 import { formatearPrecioParaguayo } from "@/lib/utils"
 import { CategoryIcon } from "@/lib/category-icons"
+import { useEffect, useState } from "react"
+import { tiendasService, TiendaFrontend } from "@/lib/api/tiendas"
+import { useProductosByTienda } from "@/hooks/useProductos"
 
 export default function TiendaPage({ params }: { params: { id: string } }) {
-  const { trackStoreView } = useBehaviorTracking()
-  const tienda = tiendas.find((t) => t.id.toString() === params.id)
+  const [tienda, setTienda] = useState<TiendaFrontend | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Rastrear vista de la tienda
-  trackStoreView(tienda?.id || 0)
+  // Productos de la tienda (datos reales)
+  const tiendaIdNum = Number(params.id)
+  const { productos: productosTienda, loading: loadingProductos } = useProductosByTienda(tiendaIdNum, { per_page: 12 })
 
-  if (!tienda) {
+  // Rastrear tiempo en página de tienda (duración) con BehaviorTracker
+  useEffect(() => {
+    const tracker = BehaviorTracker.getInstance()
+    const start = Date.now()
+    return () => {
+      const duration = Date.now() - start
+      tracker.trackStoreView(tiendaIdNum || 0, duration)
+    }
+  }, [tiendaIdNum])
+
+  useEffect(() => {
+    let mounted = true
+    const fetchTienda = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const response = await tiendasService.getTiendaById(tiendaIdNum)
+        if (!mounted) return
+        setTienda(response.data)
+      } catch (err: any) {
+        console.error('Error cargando tienda:', err)
+        if (!mounted) return
+        setError(err?.message || 'No se pudo cargar la tienda')
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+    if (Number.isFinite(tiendaIdNum)) fetchTienda()
+    return () => { mounted = false }
+  }, [tiendaIdNum])
+
+  if (!loading && (!tienda || error)) {
     return notFound()
   }
 
-  // Filtrar productos de esta tienda
-  const productosTienda = productos.filter((p) => p.tiendaId === tienda.id)
+  const categorias = tienda?.categorias ?? []
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -48,8 +81,8 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
           <div className="relative mb-8">
             <div className="h-48 md:h-64 relative rounded-lg overflow-hidden bg-muted">
               <Image
-                src={tienda.imagenPortada || "/placeholder.svg?height=300&width=800"}
-                alt={`Portada de ${tienda.nombre}`}
+                src={(tienda?.imagenPortada || "/placeholder.svg?height=300&width=800")}
+                alt={`Portada de ${tienda?.nombre ?? 'Tienda'}`}
                 fill
                 className="object-cover"
               />
@@ -57,8 +90,8 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
             <div className="absolute -bottom-12 left-6">
               <div className="relative h-24 w-24 rounded-full border-4 border-background bg-muted overflow-hidden">
                 <Image
-                  src={tienda.logo || "/placeholder.svg?height=100&width=100"}
-                  alt={`Logo de ${tienda.nombre}`}
+                  src={(tienda?.logo || "/placeholder.svg?height=100&width=100")}
+                  alt={`Logo de ${tienda?.nombre ?? 'Tienda'}`}
                   fill
                   className="object-cover"
                 />
@@ -71,18 +104,18 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
             <div className="md:col-span-2 space-y-6">
               <div>
                 <div className="flex items-center gap-3 mb-2">
-                  <h1 className="text-3xl font-bold">{tienda.nombre}</h1>
+                  <h1 className="text-3xl font-bold">{tienda?.nombre ?? (loading ? 'Cargando tienda…' : 'Tienda')}</h1>
                   <div className="flex items-center gap-1">
                     <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                    <span className="font-medium">{tienda.calificacion}</span>
-                    <span className="text-muted-foreground">({tienda.totalReseñas} reseñas)</span>
+                    <span className="font-medium">{tienda?.calificacion ?? '-'}</span>
+                    <span className="text-muted-foreground">({tienda?.totalReseñas ?? 0} reseñas)</span>
                   </div>
                 </div>
-                <p className="text-muted-foreground">{tienda.descripcion}</p>
+                <p className="text-muted-foreground">{tienda?.descripcion ?? ''}</p>
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {tienda.categorias.map((categoria) => (
+                {categorias.map((categoria) => (
                   <Badge key={categoria} variant="secondary" className="flex items-center gap-1">
                     <CategoryIcon 
                       categorySlug={categoria.toLowerCase().replace(/\s+/g, '')} 
@@ -97,7 +130,9 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
               {/* Productos de la tienda */}
               <div>
                 <h2 className="text-2xl font-bold mb-6">Productos ({productosTienda.length})</h2>
-                {productosTienda.length > 0 ? (
+                {loadingProductos ? (
+                  <div className="text-muted-foreground">Cargando productos…</div>
+                ) : productosTienda.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                     {productosTienda.map((producto) => (
                       <Link
@@ -148,7 +183,7 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
 
               {/* Sección de reseñas de la tienda */}
               <div className="mt-12">
-                <ReviewsSection storeId={tienda.id} type="store" />
+                <ReviewsSection storeId={tienda?.id} type="store" />
               </div>
             </div>
 
@@ -162,21 +197,21 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                       <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
                       <div>
                         <p className="text-sm font-medium">Dirección</p>
-                        <p className="text-sm text-muted-foreground">{tienda.direccion}</p>
+                        <p className="text-sm text-muted-foreground">{tienda?.direccion}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
                       <Phone className="h-5 w-5 text-muted-foreground mt-0.5" />
                       <div>
                         <p className="text-sm font-medium">Teléfono</p>
-                        <p className="text-sm text-muted-foreground">{tienda.telefono}</p>
+                        <p className="text-sm text-muted-foreground">{tienda?.telefono}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
                       <Mail className="h-5 w-5 text-muted-foreground mt-0.5" />
                       <div>
                         <p className="text-sm font-medium">Email</p>
-                        <p className="text-sm text-muted-foreground">{tienda.email}</p>
+                        <p className="text-sm text-muted-foreground">{tienda?.email}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
@@ -184,7 +219,7 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                       <div>
                         <p className="text-sm font-medium">Horarios</p>
                         <div className="text-sm text-muted-foreground">
-                          {tienda.horarios.map((horario, index) => (
+                          {(tienda?.horarios ?? []).map((horario, index) => (
                             <p key={index}>{horario}</p>
                           ))}
                         </div>
@@ -204,11 +239,11 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-muted-foreground">Miembro desde</span>
-                      <span className="text-sm font-medium">{tienda.fechaRegistro}</span>
+                      <span className="text-sm font-medium">{tienda?.fechaRegistro ?? '-'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-muted-foreground">Ventas totales</span>
-                      <span className="text-sm font-medium">{tienda.ventasTotales}+</span>
+                      <span className="text-sm font-medium">{tienda?.ventasTotales ?? 0}+</span>
                     </div>
                   </div>
                 </CardContent>
@@ -221,7 +256,7 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
           {/* Sección de recomendaciones */}
           <div className="mt-16">
             <RecommendationsSection
-              currentStoreId={tienda.id}
+              currentStoreId={tienda?.id || tiendaIdNum}
               showRecentlyViewed={true}
               showRecommended={true}
               showStores={false}

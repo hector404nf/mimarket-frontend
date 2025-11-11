@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import Image from "next/image"
 import {
@@ -30,6 +31,16 @@ import { useCart } from "@/lib/cart-store"
 import { toast } from "@/components/ui/use-toast"
 import { ordenesService, OrdenBackend, OrdenDetalle } from "@/lib/api/ordenes"
 import { storeService } from "@/lib/store"
+import { routingService } from "@/lib/api/routing"
+
+const TrackingMap = dynamic(() => import("@/components/tracking-map"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-80 bg-muted rounded-lg animate-pulse flex items-center justify-center">
+      <p className="text-muted-foreground">Cargando mapa…</p>
+    </div>
+  ),
+})
 
 interface OrderData {
   customerInfo: {
@@ -92,17 +103,27 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
   const [rating, setRating] = useState(0)
   const [reviewText, setReviewText] = useState("")
   const [storeNames, setStoreNames] = useState<Record<number, string>>({})
+  const orderId = Number(params.id)
+  const [destination, setDestination] = useState<{ lat: number; lng: number } | null>(null)
+  const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null)
+  const [etaSec, setEtaSec] = useState<number | null>(null)
+  const [distanceMeters, setDistanceMeters] = useState<number | null>(null)
+  const [sseSupported, setSseSupported] = useState<boolean>(typeof window !== 'undefined' && 'EventSource' in window)
+  const [sseConnected, setSseConnected] = useState<boolean>(false)
+  const [sseError, setSseError] = useState<string | null>(null)
+  const [usePolling, setUsePolling] = useState<boolean>(true)
+  const routeThrottleRef = useRef<number>(0)
 
   useEffect(() => {
     const fetchOrder = async () => {
-      const idNum = Number(params.id)
+      const idNum = orderId
       if (!idNum || Number.isNaN(idNum)) {
         router.push("/perfil")
         return
       }
 
       try {
-        const orden: OrdenBackend = await ordenesService.getOrden(idNum)
+        const orden: any = await ordenesService.getOrden(idNum)
 
         const deliveryMethod = getDeliveryMethodFromDetalles(orden.detalles)
         const mappedStatus = mapBackendStatus(orden.estado)
@@ -143,6 +164,13 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
         setOrderData(mapped)
         setCurrentStatus(mappedStatus)
 
+        // Coordenadas de destino (si están disponibles)
+        const lat = orden?.direccion_envio_meta?.latitud ?? orden?.envio?.latitud ?? null
+        const lng = orden?.direccion_envio_meta?.longitud ?? orden?.envio?.longitud ?? null
+        if (lat && lng) {
+          setDestination({ lat: Number(lat), lng: Number(lng) })
+        }
+
         // Cargar nombres de tiendas para IDs presentes en los ítems
         const ids = Array.from(
           new Set(
@@ -178,7 +206,115 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
     }
 
     fetchOrder()
-  }, [params.id, router])
+  }, [orderId, router])
+
+  // SSE de tracking con fallback a polling
+  useEffect(() => {
+    if (!orderId || Number.isNaN(orderId)) return
+    if (!destination) return
+
+    let es: EventSource | null = null
+    let canceled = false
+
+    const maybeRoute = async (pos: { lat: number; lng: number }) => {
+      const now = Date.now()
+      // Reducir throttle de cálculo de ruta/ETA para respuestas más rápidas
+      if (now - (routeThrottleRef.current || 0) < 2000) return
+      routeThrottleRef.current = now
+      try {
+        const r = await routingService.driving(pos, destination)
+        if (!canceled) {
+          setEtaSec(typeof r?.duration === 'number' ? r.duration : null)
+          setDistanceMeters(typeof r?.distance === 'number' ? r.distance : null)
+        }
+      } catch {}
+    }
+
+    if (sseSupported) {
+      try {
+        es = ordenesService.streamTracking(orderId)
+        es.addEventListener('tracking', (ev: MessageEvent) => {
+          try {
+            const data = JSON.parse(ev.data)
+            const lat = data?.latitud
+            const lng = data?.longitud
+            const active = data?.tracking_activo
+            if (lat && lng && active) {
+              const pos = { lat: Number(lat), lng: Number(lng) }
+              setDriverPos(pos)
+              maybeRoute(pos)
+            }
+          } catch (e) {}
+        })
+        es.onopen = () => {
+          setSseConnected(true)
+          setSseError(null)
+          setUsePolling(false)
+        }
+        es.onerror = (e) => {
+          // Si hay error, deshabilitar SSE y activar polling
+          setSseConnected(false)
+          setSseError('SSE desconectado, usando polling')
+          setUsePolling(true)
+          // No cerrar manualmente: permitir reconexión automática de EventSource
+        }
+      } catch (e: any) {
+        setSseError('No se pudo iniciar SSE, usando polling')
+        setUsePolling(true)
+      }
+    } else {
+      setUsePolling(true)
+    }
+
+    return () => {
+      canceled = true
+      try { es?.close() } catch {}
+    }
+  }, [orderId, destination, sseSupported])
+
+  // Polling de tracking (fallback si SSE no está activo)
+  useEffect(() => {
+    if (!orderId || Number.isNaN(orderId)) return
+    if (!destination) return
+    if (!usePolling) return
+
+    let timer: any
+    let canceled = false
+
+    const poll = async () => {
+      try {
+        const snap = await ordenesService.getTracking(orderId)
+        const latStr = snap?.latitud
+        const lngStr = snap?.longitud
+        const active = snap?.tracking_activo
+        if (latStr && lngStr && active) {
+          const pos = { lat: Number(latStr), lng: Number(lngStr) }
+          setDriverPos(pos)
+          // Calcular ruta/ETA (throttle)
+          const now = Date.now()
+          // Reducir throttle de cálculo de ruta/ETA en polling
+          if (now - (routeThrottleRef.current || 0) >= 2000) {
+            routeThrottleRef.current = now
+            try {
+              const r = await routingService.driving(pos, destination)
+              if (!canceled) {
+                setEtaSec(typeof r?.duration === 'number' ? r.duration : null)
+                setDistanceMeters(typeof r?.distance === 'number' ? r.distance : null)
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    // Reducir intervalo de polling para mejorar la percepción de tiempo real
+    timer = setInterval(poll, 2000)
+    poll()
+    return () => {
+      canceled = true
+      clearInterval(timer)
+    }
+  }, [orderId, destination, usePolling])
 
   const mapBackendStatus = (estado: string) => {
     const normalized = (estado || "").toLowerCase()
@@ -460,6 +596,55 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                   )}
                 </CardContent>
               </Card>
+
+              {/* Seguimiento en tiempo real (mapa) */}
+              {destination && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg md:text-xl">Seguimiento en tiempo real</CardTitle>
+                      <div className="text-xs md:text-sm text-muted-foreground">
+                        {sseConnected ? (
+                          <span className="text-green-600">SSE activo</span>
+                        ) : usePolling ? (
+                          <span>Polling activo</span>
+                        ) : (
+                          <span>Conectando…</span>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <TrackingMap
+                        destination={destination}
+                        tracking={false}
+                        originExternal={driverPos}
+                        onPositionUpdate={() => {}}
+                      />
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="p-2 border rounded">
+                          <p className="text-muted-foreground">ETA</p>
+                          <p className="font-medium">{etaSec != null ? `${Math.round(etaSec / 60)} min` : '—'}</p>
+                        </div>
+                        <div className="p-2 border rounded">
+                          <p className="text-muted-foreground">Distancia</p>
+                          <p className="font-medium">{distanceMeters != null ? `${Math.round(distanceMeters)} m` : '—'}</p>
+                        </div>
+                      </div>
+                      {!driverPos && (
+                        <p className="text-xs text-muted-foreground">
+                          Aún no hay tracking activo de este pedido. Intenta más tarde.
+                          {sseError ? ` (${sseError})` : ''}
+                        </p>
+                      )}
+                      {distanceMeters != null && distanceMeters < 200 && (
+                        <p className="text-xs font-medium text-green-600">Muy cerca: el repartidor está a menos de 200 m</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Información de tiendas del pedido */}
               <Card>

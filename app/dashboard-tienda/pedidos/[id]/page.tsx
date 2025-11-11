@@ -333,6 +333,9 @@ export default function DetallePedidoTiendaPage() {
                   <Button asChild variant="outline">
                     <Link href={`/dashboard-tienda/pedidos/${orden.id_orden}`}>Actualizar estado desde lista</Link>
                   </Button>
+                  <Button asChild>
+                    <Link href={`/dashboard-tienda/pedidos/${orden.id_orden}/seguimiento`}>Seguir pedido en mapa</Link>
+                  </Button>
                   <p className="text-xs text-muted-foreground">
                     Usa la lista para cambiar el estado del pedido. Aquí mostramos la información completa del pedido.
                   </p>

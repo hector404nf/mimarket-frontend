@@ -52,6 +52,26 @@ export function useNotifications() {
     }
   }, [user?.id, storeInfo?.id_tienda])
 
+  // Obtener notificaciones y devolver opcionalmente solo no leídas
+  const getNotifications = useCallback(async (onlyUnread?: boolean): Promise<Notification[]> => {
+    if (!user?.id) return []
+
+    try {
+      // Endpoint según contexto (tienda o usuario)
+      const endpoint = storeInfo?.id_tienda 
+        ? `/v1/notificaciones/tienda/${storeInfo.id_tienda}`
+        : `/v1/notificaciones/usuario/${user.id}`
+
+      const response = await api.get<any>(endpoint)
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || [])
+      const result = onlyUnread ? data.filter((n: Notification) => !n.leida) : data
+      return result
+    } catch (error) {
+      console.error('Error fetching notifications:', error)
+      return []
+    }
+  }, [user?.id, storeInfo?.id_tienda])
+
   // Obtener solo el conteo de no leídas
   const fetchUnreadCount = useCallback(async () => {
     if (!user?.id) return
@@ -130,6 +150,8 @@ export function useNotifications() {
     loading,
     fetchNotifications,
     fetchUnreadCount,
+    getNotifications,
+    getUnreadCount: fetchUnreadCount,
     markAsRead,
     markAllAsRead,
     getUnreadNotifications,

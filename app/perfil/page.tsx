@@ -35,6 +35,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import { subscribeUser, unsubscribeUser } from "@/lib/push"
+import { toast } from "@/components/ui/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -43,6 +45,7 @@ import { productos } from "@/lib/data"
 import { tiendas } from "@/lib/stores-data"
 import { useAuth } from "@/contexts/auth-context"
 import { ordenesService, OrdenBackend } from "@/lib/api/ordenes"
+import { metodosPagoService, MetodoPagoBackend } from "@/lib/api/metodos-pago"
 
 // Órdenes del backend
 type OrdenUI = {
@@ -114,6 +117,16 @@ export default function PerfilPage() {
   const [orders, setOrders] = useState<OrdenUI[]>([])
   const [ordersLoading, setOrdersLoading] = useState(false)
   const [ordersError, setOrdersError] = useState<string>("")
+  const [pushEnabled, setPushEnabled] = useState(false)
+  // Métodos de pago
+  const [metodosPago, setMetodosPago] = useState<MetodoPagoBackend[]>([])
+  const [loadingMetodos, setLoadingMetodos] = useState(false)
+  const [errorMetodos, setErrorMetodos] = useState<string>("")
+  // Formulario de nueva tarjeta
+  const [newCardNumber, setNewCardNumber] = useState("")
+  const [newCardExpiry, setNewCardExpiry] = useState("")
+  const [newCardName, setNewCardName] = useState("")
+  const [savingCard, setSavingCard] = useState(false)
 
   const handleLogout = async () => {
     try {
@@ -129,6 +142,13 @@ export default function PerfilPage() {
       router.push('/login')
     }
   }, [isLoading, isAuthenticated, router])
+
+  // Redirigir a dashboard de tienda si el usuario es propietario de tienda
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user?.profile_type === 'store') {
+      router.push('/dashboard-tienda')
+    }
+  }, [isLoading, isAuthenticated, user?.profile_type, router])
 
   useEffect(() => {
     if (isAuthenticated && !user) {
@@ -171,6 +191,134 @@ export default function PerfilPage() {
 
     fetchOrders()
   }, [isAuthenticated, user?.id])
+
+  // Cargar métodos de pago
+  useEffect(() => {
+    const fetchMetodos = async () => {
+      if (!isAuthenticated || !user?.id) return
+      setLoadingMetodos(true)
+      setErrorMetodos("")
+      try {
+        const data = await metodosPagoService.getByUsuario(user.id)
+        setMetodosPago(data)
+      } catch (err) {
+        console.error("Error cargando métodos de pago:", err)
+        setErrorMetodos("No se pudieron cargar tus métodos de pago")
+      } finally {
+        setLoadingMetodos(false)
+      }
+    }
+    fetchMetodos()
+  }, [isAuthenticated, user?.id])
+
+  const detectBrand = (cardNumber: string): string => {
+    const num = cardNumber.replace(/\s+/g, '')
+    if (/^4[0-9]{12}(?:[0-9]{3})?$/.test(num)) return 'Visa'
+    if (/^(5[1-5][0-9]{14}|2(2[2-9][0-9]{12}|[3-6][0-9]{13}|7[01][0-9]{12}|720[0-9]{12}))$/.test(num)) return 'Mastercard'
+    return 'Tarjeta'
+  }
+
+  const parseExpiry = (value: string): { mes?: number, anio?: number } => {
+    const m = value.match(/^(\d{2})[\/\-]?(\d{2,4})$/)
+    if (!m) return {}
+    const mes = parseInt(m[1], 10)
+    let anio = parseInt(m[2], 10)
+    if (anio < 100) anio = 2000 + anio
+    return { mes, anio }
+  }
+
+  const handleSaveCard = async () => {
+    if (!user?.id) return
+    if (!newCardNumber || !newCardExpiry || !newCardName) {
+      toast({ title: 'Datos incompletos', description: 'Completa número, expiración y nombre', variant: 'destructive' })
+      return
+    }
+    const digits = newCardNumber.replace(/\D/g, '')
+    const terminacion = digits.slice(-4)
+    const brand = detectBrand(newCardNumber)
+    const { mes, anio } = parseExpiry(newCardExpiry)
+    if (!terminacion || !mes || !anio) {
+      toast({ title: 'Formato inválido', description: 'Verifica número y fecha (MM/AA)', variant: 'destructive' })
+      return
+    }
+    setSavingCard(true)
+    try {
+      const created = await metodosPagoService.create({
+        user_id: user.id,
+        tipo: 'tarjeta',
+        marca: brand,
+        terminacion,
+        nombre_titular: newCardName,
+        mes_venc: mes,
+        anio_venc: anio,
+        activo: true,
+      })
+      setMetodosPago(prev => [created, ...prev])
+      setShowAddCard(false)
+      setNewCardNumber('')
+      setNewCardExpiry('')
+      setNewCardName('')
+      toast({ title: 'Tarjeta guardada', description: 'Se añadió tu tarjeta correctamente' })
+    } catch (error: any) {
+      console.error('Error guardando tarjeta:', error)
+      toast({ title: 'Error', description: error?.message || 'No se pudo guardar la tarjeta', variant: 'destructive' })
+    } finally {
+      setSavingCard(false)
+    }
+  }
+
+  const handleDeleteMethod = async (id: number) => {
+    try {
+      await metodosPagoService.delete(id)
+      setMetodosPago(prev => prev.filter(m => m.id_metodo !== id))
+      toast({ title: 'Método eliminado', description: 'Se eliminó el método de pago' })
+    } catch (error) {
+      toast({ title: 'Error', description: 'No se pudo eliminar el método', variant: 'destructive' })
+    }
+  }
+
+  const handleSetDefault = async (id: number) => {
+    try {
+      await metodosPagoService.setDefault(id)
+      setMetodosPago(prev => prev.map(m => ({ ...m, predeterminada: m.id_metodo === id })))
+      toast({ title: 'Predeterminado actualizado', description: 'Método configurado como principal' })
+    } catch (error) {
+      toast({ title: 'Error', description: 'No se pudo establecer como predeterminado', variant: 'destructive' })
+    }
+  }
+
+  // Inicializa el estado del interruptor de push consultando la suscripción existente
+  useEffect(() => {
+    const checkPushSubscription = async () => {
+      try {
+        const registration = await navigator.serviceWorker.getRegistration()
+        const sub = await registration?.pushManager?.getSubscription()
+        setPushEnabled(!!sub)
+      } catch (err) {
+        console.warn('[Push] No se pudo verificar suscripción existente:', err)
+      }
+    }
+    if (typeof window !== 'undefined') {
+      checkPushSubscription()
+    }
+  }, [])
+
+  const handlePushToggle = async (checked: boolean) => {
+    try {
+      if (checked) {
+        await subscribeUser('perfil')
+        setPushEnabled(true)
+        toast({ title: 'Push habilitado', description: 'Suscripción creada correctamente' })
+      } else {
+        await unsubscribeUser()
+        setPushEnabled(false)
+        toast({ title: 'Push deshabilitado', description: 'Suscripción cancelada' })
+      }
+    } catch (error: any) {
+      console.error('[Push] Error cambiando estado de notificaciones:', error)
+      toast({ title: 'Error con notificaciones push', description: error?.message || 'No se pudo cambiar el estado', variant: 'destructive' })
+    }
+  }
 
   const getEstadoBadge = (estado: string) => {
     switch (estado) {
@@ -427,13 +575,13 @@ export default function PerfilPage() {
                         </DialogHeader>
                         <div className="space-y-4">
                           <div>
-                            <Label htmlFor="cardNumber">Número de tarjeta</Label>
-                            <Input id="cardNumber" placeholder="1234 5678 9012 3456" />
+                          <Label htmlFor="cardNumber">Número de tarjeta</Label>
+                            <Input id="cardNumber" placeholder="1234 5678 9012 3456" value={newCardNumber} onChange={(e) => setNewCardNumber(e.target.value)} />
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <Label htmlFor="expiry">Fecha de expiración</Label>
-                              <Input id="expiry" placeholder="MM/AA" />
+                              <Input id="expiry" placeholder="MM/AA" value={newCardExpiry} onChange={(e) => setNewCardExpiry(e.target.value)} />
                             </div>
                             <div>
                               <Label htmlFor="cvv">CVV</Label>
@@ -442,10 +590,10 @@ export default function PerfilPage() {
                           </div>
                           <div>
                             <Label htmlFor="cardName">Nombre en la tarjeta</Label>
-                            <Input id="cardName" placeholder="Juan Pérez" />
+                            <Input id="cardName" placeholder="Juan Pérez" value={newCardName} onChange={(e) => setNewCardName(e.target.value)} />
                           </div>
                           <div className="flex flex-col sm:flex-row gap-2">
-                            <Button className="w-full">Guardar tarjeta</Button>
+                            <Button className="w-full" onClick={handleSaveCard} disabled={savingCard}>{savingCard ? 'Guardando...' : 'Guardar tarjeta'}</Button>
                             <Button variant="outline" onClick={() => setShowAddCard(false)} className="w-full">
                               Cancelar
                             </Button>
@@ -456,8 +604,22 @@ export default function PerfilPage() {
                   </div>
 
                   <div className="space-y-4">
-                    {tarjetasSimuladas.map((tarjeta) => (
-                      <Card key={tarjeta.id}>
+                    {loadingMetodos && (
+                      <Card>
+                        <CardContent className="p-4 md:p-6">
+                          <p className="text-sm text-muted-foreground">Cargando métodos de pago...</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {errorMetodos && !loadingMetodos && (
+                      <Card>
+                        <CardContent className="p-4 md:p-6">
+                          <p className="text-sm text-red-600">{errorMetodos}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {metodosPago.filter((m) => m.tipo === 'tarjeta').map((metodo) => (
+                      <Card key={metodo.id_metodo}>
                         <CardContent className="p-4 md:p-6">
                           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                             <div className="flex items-center gap-4 flex-1 min-w-0">
@@ -466,26 +628,29 @@ export default function PerfilPage() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 mb-1">
-                                  <p className="font-medium text-sm md:text-base">{tarjeta.numero}</p>
-                                  {tarjeta.principal && (
+                                  <p className="font-medium text-sm md:text-base">**** **** **** {metodo.terminacion}</p>
+                                  {metodo.predeterminada && (
                                     <Badge variant="secondary" className="text-xs">
                                       Principal
                                     </Badge>
                                   )}
                                 </div>
-                                <p className="text-xs md:text-sm text-muted-foreground">{tarjeta.nombre}</p>
-                                <p className="text-xs md:text-sm text-muted-foreground">Expira: {tarjeta.expiracion}</p>
+                                <p className="text-xs md:text-sm text-muted-foreground">{metodo.nombre_titular}</p>
+                                <p className="text-xs md:text-sm text-muted-foreground">Expira: {String(metodo.mes_venc || '')}/{String(metodo.anio_venc || '').slice(-2)}</p>
                               </div>
                             </div>
                             <div className="flex gap-2 w-full sm:w-auto">
-                              <Button variant="outline" size="sm" className="flex-1 sm:flex-none bg-transparent">
-                                <Edit className="h-4 w-4 mr-2" />
-                                Editar
-                              </Button>
+                              {!metodo.predeterminada && (
+                                <Button variant="outline" size="sm" onClick={() => handleSetDefault(metodo.id_metodo)} className="flex-1 sm:flex-none bg-transparent">
+                                  <Edit className="h-4 w-4 mr-2" />
+                                  Predeterminar
+                                </Button>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="flex-1 sm:flex-none text-red-600 hover:text-red-700 bg-transparent"
+                                onClick={() => handleDeleteMethod(metodo.id_metodo)}
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
                                 Eliminar
@@ -808,7 +973,7 @@ export default function PerfilPage() {
                               Recibe notificaciones en tu dispositivo
                             </p>
                           </div>
-                          <Switch />
+                          <Switch checked={pushEnabled} onCheckedChange={handlePushToggle} />
                         </div>
                         <Separator />
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

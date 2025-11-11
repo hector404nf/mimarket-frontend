@@ -1,13 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Search, ShoppingCart, User, Menu, X, Store, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Badge } from "@/components/ui/badge"
-import SearchComponent from "@/components/search"
+import SmartSearch from "@/components/smart-search"
 import { useCart } from "@/lib/cart-store"
 import { useProfileType, useStoreAccess } from "@/hooks/use-profile-type"
 import { useAuth } from "@/contexts/auth-context"
@@ -48,8 +48,11 @@ export default function Navbar() {
   }
 
   const navItems = [...baseNavItems, ...conditionalNavItems]
+  // Evitar hydration mismatch: obtener datos del carrito solo en cliente
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const { getTotalItems } = useCart()
-  const totalItems = getTotalItems()
+  const totalItems = mounted ? getTotalItems() : 0
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -77,7 +80,7 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           {isSearchOpen ? (
             <div className="relative w-full max-w-sm">
-              <SearchComponent />
+              <SmartSearch variant="navbar" />
               <Button
                 variant="ghost"
                 size="icon"
@@ -97,13 +100,15 @@ export default function Navbar() {
           <Button variant="ghost" size="icon" asChild>
             <Link href="/carrito" className="relative">
               <ShoppingCart className="h-5 w-5" />
-              {/* Mantener texto accesible como primer nodo para evitar mismatch de hidratación */}
+              {/* Texto accesible como primer nodo para evitar mismatch */}
               <span className="sr-only">Carrito</span>
-              {totalItems > 0 && (
-                <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-[10px]" suppressHydrationWarning>
-                  {totalItems}
-                </Badge>
-              )}
+              {/* Renderizar siempre el badge, ocultándolo cuando el conteo sea 0 */}
+              <Badge
+                className={`absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-[10px] transition-opacity ${totalItems > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                aria-hidden="true"
+              >
+                <span suppressHydrationWarning>{totalItems}</span>
+              </Badge>
             </Link>
           </Button>
 

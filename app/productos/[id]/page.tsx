@@ -33,6 +33,7 @@ import RecommendationsSection from "@/components/recommendations-section"
 import { formatearPrecioParaguayo } from "@/lib/utils"
 import { CategoryIcon } from "@/lib/category-icons"
 import { getImagenesProducto } from "@/lib/image-utils"
+import { BehaviorTracker } from "@/lib/behavior-tracker"
 
 export default function ProductoPage() {
   const params = useParams()
@@ -42,9 +43,12 @@ export default function ProductoPage() {
   
   const id = Number.parseInt(params.id as string)
   const { producto, loading, error } = useProducto(id)
+  const [behaviorTracker, setBehaviorTracker] = useState<BehaviorTracker | null>(null)
+  const [viewStart, setViewStart] = useState<number | null>(null)
 
   // Logs de depuración
   useEffect(() => {
+    setBehaviorTracker(BehaviorTracker.getInstance())
     if (producto) {
       console.log('=== DEBUG PRODUCTO COMPLETO ===')
       console.log('Producto recibido:', producto)
@@ -65,6 +69,20 @@ export default function ProductoPage() {
       console.log('=== FIN DEBUG ===')
     }
   }, [producto])
+
+  // Rastrear tiempo en página de producto
+  useEffect(() => {
+    if (producto && behaviorTracker) {
+      const start = Date.now()
+      setViewStart(start)
+      return () => {
+        const duration = Date.now() - start
+        // Usa id_producto real
+        behaviorTracker.trackProductView(producto.id_producto, duration)
+      }
+    }
+    return
+  }, [producto, behaviorTracker])
 
   if (loading) {
     return (
@@ -129,6 +147,8 @@ export default function ProductoPage() {
     try {
       const precio = parseFloat(producto.precio.toString())
       await addItem(producto.id_producto, cantidad, precio)
+      // Rastrear acción de carrito para métricas y recomendaciones
+      behaviorTracker?.trackAddToCart(producto.id_producto)
       toast({
         title: "Producto añadido",
         description: `${cantidad} ${producto.nombre}(s) añadido(s) al carrito.`,

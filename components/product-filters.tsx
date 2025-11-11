@@ -3,12 +3,12 @@
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { categorias as categoriasData, marcas as marcasData } from "@/lib/data"
-import { CategoryIcon, categoriesWithIcons } from "@/lib/category-icons"
+import { categoriasService, type Categoria } from "@/lib/api/categorias"
+import { tiendasService, type TiendaFrontend } from "@/lib/api/tiendas"
 
 export default function ProductFilters() {
   const router = useRouter()
@@ -17,8 +17,12 @@ export default function ProductFilters() {
   const [precioMin, setPrecioMin] = useState(0)
   const [precioMax, setPrecioMax] = useState(1000)
   const [categorias, setCategorias] = useState<string[]>([])
-  const [marcas, setMarcas] = useState<string[]>([])
+  // Catálogo dinámico desde BD
+  const [categoriasDisponibles, setCategoriasDisponibles] = useState<Categoria[]>([])
+  const [tiendasDisponibles, setTiendasDisponibles] = useState<TiendaFrontend[]>([])
+  const [tiendaSeleccionadaId, setTiendaSeleccionadaId] = useState<string | null>(null)
   const [tiposVenta, setTiposVenta] = useState<string[]>([])
+  const [filtrarPorPrecio, setFiltrarPorPrecio] = useState<boolean>(false)
 
   // Inicializar filtros desde URL
   useEffect(() => {
@@ -40,10 +44,10 @@ export default function ProductFilters() {
       setTiposVenta([tipoVentaParam])
     }
 
-    // Marcas
-    const marcasParam = searchParams.get("marcas")
-    if (marcasParam) {
-      setMarcas(marcasParam.split(","))
+    // Tienda (marca)
+    const tiendaParam = searchParams.get("tienda")
+    if (tiendaParam) {
+      setTiendaSeleccionadaId(tiendaParam)
     }
 
     // Precios
@@ -55,29 +59,64 @@ export default function ProductFilters() {
     if (precioMaxParam) {
       setPrecioMax(parseInt(precioMaxParam))
     }
+    setFiltrarPorPrecio(Boolean(precioMinParam || precioMaxParam))
   }, [searchParams])
 
+  // Cargar categorías y tiendas desde backend (independiente para no ocultar categorías si falla tiendas)
+  useEffect(() => {
+    (async () => {
+      try {
+        const cats = await categoriasService.getCategorias()
+        setCategoriasDisponibles(cats)
+      } catch (e) {
+        console.warn('No se pudieron cargar categorías para filtros:', e)
+      }
+
+      try {
+        const tiendas = await tiendasService.getTiendas({ verificada: true })
+        setTiendasDisponibles(tiendas.data)
+      } catch (e) {
+        console.warn('No se pudieron cargar tiendas para filtros (no afecta categorías):', e)
+      }
+    })()
+  }, [])
+
   // Aplicar filtros
-  const aplicarFiltros = () => {
+  const aplicarFiltros = async () => {
     console.log('ProductFilters - Aplicando filtros con categorías:', categorias)
     const params = new URLSearchParams()
 
     if (categorias.length > 0) {
       params.set("categorias", categorias.join(","))
       console.log('ProductFilters - Parámetro categorias generado:', categorias.join(","))
+      try {
+        const cats = await categoriasService.getCategorias()
+        const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+        const mapNameToId = new Map(cats.map(c => [norm(c.nombre), c.id_categoria]))
+        const firstId = mapNameToId.get(norm(categorias[0]))
+        if (firstId) {
+          params.set("categoria", String(firstId))
+        }
+      } catch (e) {
+        console.warn('No se pudo mapear categorías a ID', e)
+      }
     }
 
-    if (marcas.length > 0) {
-      params.set("marcas", marcas.join(","))
+    // Tienda seleccionada
+    if (tiendaSeleccionadaId) {
+      params.set("tienda", tiendaSeleccionadaId)
     }
 
     if (tiposVenta.length > 0) {
       params.set("tiposVenta", tiposVenta.join(","))
     }
 
-    if (precioMin > 0 || precioMax < 1000) {
-      params.set("precio_min", precioMin.toString())
-      params.set("precio_max", precioMax.toString())
+    // Validar y aplicar rango de precios solo si el check está activo
+    if (filtrarPorPrecio) {
+      const safeMin = Math.max(0, precioMin || 0)
+      const safeMax = Math.max(safeMin, precioMax || 0)
+      params.set("precio_min", safeMin.toString())
+      params.set("precio_max", safeMax.toString())
     }
 
     const busqueda = searchParams.get("busqueda")
@@ -99,8 +138,9 @@ export default function ProductFilters() {
     setPrecioMin(0)
     setPrecioMax(1000)
     setCategorias([])
-    setMarcas([])
+    setTiendaSeleccionadaId(null)
     setTiposVenta([])
+    setFiltrarPorPrecio(false)
 
     const busqueda = searchParams.get("busqueda")
     if (busqueda) {
@@ -131,13 +171,9 @@ export default function ProductFilters() {
     }
   }
 
-  // Manejar cambio de marca
-  const toggleMarca = (marca: string) => {
-    if (marcas.includes(marca)) {
-      setMarcas(marcas.filter((m) => m !== marca))
-    } else {
-      setMarcas([...marcas, marca])
-    }
+  // Manejar cambio de tienda (marca)
+  const handleSeleccionTienda = (id: string) => {
+    setTiendaSeleccionadaId(id)
   }
 
   // Manejar cambio de tipo de venta
@@ -185,21 +221,14 @@ export default function ProductFilters() {
           <AccordionTrigger>Categorías</AccordionTrigger>
           <AccordionContent>
             <div className="space-y-2">
-              {categoriesWithIcons.map((categoria) => (
-                <div key={categoria.slug} className="flex items-center space-x-2">
+              {categoriasDisponibles.map((c) => (
+                <div key={c.id_categoria} className="flex items-center space-x-2">
                   <Checkbox
-                    id={`categoria-${categoria.slug}`}
-                    checked={categorias.includes(categoria.name)}
-                    onCheckedChange={() => toggleCategoria(categoria.name)}
+                    id={`categoria-${c.id_categoria}`}
+                    checked={categorias.includes(c.nombre)}
+                    onCheckedChange={() => toggleCategoria(c.nombre)}
                   />
-                  <Label htmlFor={`categoria-${categoria.slug}`} className="flex items-center gap-2 cursor-pointer">
-                    <CategoryIcon 
-                      categorySlug={categoria.slug} 
-                      categoryName={categoria.name}
-                      className="h-4 w-4"
-                    />
-                    {categoria.name}
-                  </Label>
+                  <Label htmlFor={`categoria-${c.id_categoria}`}>{c.nombre}</Label>
                 </div>
               ))}
             </div>
@@ -210,18 +239,41 @@ export default function ProductFilters() {
           <AccordionTrigger>Precio</AccordionTrigger>
           <AccordionContent>
             <div className="space-y-4">
-              <Slider
-                defaultValue={[precioMin, precioMax]}
-                max={1000}
-                step={10}
-                onValueChange={(values) => {
-                  setPrecioMin(values[0])
-                  setPrecioMax(values[1])
-                }}
-              />
-              <div className="flex items-center justify-between">
-                <p className="text-sm">${precioMin}</p>
-                <p className="text-sm">${precioMax}</p>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="filtrar-precio"
+                  checked={filtrarPorPrecio}
+                  onCheckedChange={(checked) => setFiltrarPorPrecio(Boolean(checked))}
+                />
+                <Label htmlFor="filtrar-precio">Filtrar por precio</Label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="precio-min">Precio mínimo</Label>
+                  <Input
+                    id="precio-min"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={precioMin}
+                    onChange={(e) => setPrecioMin(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    disabled={!filtrarPorPrecio}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="precio-max">Precio máximo</Label>
+                  <Input
+                    id="precio-max"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={precioMax}
+                    onChange={(e) => setPrecioMax(Number(e.target.value) || 0)}
+                    placeholder="1000000"
+                    disabled={!filtrarPorPrecio}
+                  />
+                </div>
               </div>
             </div>
           </AccordionContent>
@@ -231,14 +283,18 @@ export default function ProductFilters() {
           <AccordionTrigger>Marcas</AccordionTrigger>
           <AccordionContent>
             <div className="space-y-2">
-              {marcasData.map((marca) => (
-                <div key={marca} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`marca-${marca}`}
-                    checked={marcas.includes(marca)}
-                    onCheckedChange={() => toggleMarca(marca)}
+              {tiendasDisponibles.map((t) => (
+                <div key={t.id} className="flex items-center space-x-2">
+                  <input
+                    id={`tienda-${t.id}`}
+                    type="radio"
+                    name="marca"
+                    value={t.id}
+                    checked={tiendaSeleccionadaId === String(t.id)}
+                    onChange={(e) => handleSeleccionTienda(e.target.value)}
+                    className="h-4 w-4 border border-muted-foreground"
                   />
-                  <Label htmlFor={`marca-${marca}`}>{marca}</Label>
+                  <Label htmlFor={`tienda-${t.id}`}>{t.nombre}</Label>
                 </div>
               ))}
             </div>

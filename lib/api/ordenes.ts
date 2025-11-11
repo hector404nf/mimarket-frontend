@@ -44,6 +44,26 @@ export interface OrdenBackend {
   }
 }
 
+export interface OrdenTrackingSnapshot {
+  latitud?: number | string
+  longitud?: number | string
+  precision?: number
+  velocidad?: number
+  heading?: number
+  tracking_activo?: boolean
+  updated_at?: string
+}
+
+export interface OrdenTrackingUpdatePayload {
+  latitud: number
+  longitud: number
+  precision?: number
+  velocidad?: number
+  heading?: number
+  tracking_activo?: boolean
+  fuente?: 'store_app' | 'driver_app'
+}
+
 class OrdenesService {
   async getOrdenesByUsuario(usuarioId: number): Promise<OrdenBackend[]> {
     const response = await api.get<any>(`/v1/ordenes/usuario/${usuarioId}`)
@@ -72,6 +92,35 @@ class OrdenesService {
     })
     const data = response.data?.data ?? response.data
     return data as OrdenBackend
+  }
+
+  async getTracking(ordenId: number): Promise<OrdenTrackingSnapshot | null> {
+    const response = await api.get<any>(`/v1/ordenes/${ordenId}/tracking`)
+    const data = response.data?.data ?? response.data
+    return (data ?? null) as OrdenTrackingSnapshot | null
+  }
+
+  async updateTracking(ordenId: number, payload: OrdenTrackingUpdatePayload): Promise<OrdenTrackingSnapshot> {
+    const response = await api.post<any>(`/v1/ordenes/${ordenId}/tracking`, payload)
+    const data = response.data?.data ?? response.data
+    return data as OrdenTrackingSnapshot
+  }
+
+  streamTracking(ordenId: number): EventSource {
+    // Usa el proxy local "/api" configurado en Axios
+    const base = `/api/v1/ordenes/${ordenId}/tracking/stream`
+    // Enviar token por query para autenticar SSE cuando los headers no están disponibles
+    let url = base
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('auth_token')
+      if (token) {
+        const qp = `token=${encodeURIComponent(token)}`
+        url = `${base}?${qp}`
+      }
+    }
+    // No dependemos de cookies; el token en query permite la autorización
+    const es = new EventSource(url)
+    return es
   }
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { ArrowLeft, Search, Users, Mail, Phone, MapPin, Calendar, DollarSign } from "lucide-react"
@@ -10,79 +10,57 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { useProfileType } from "@/hooks/use-profile-type"
+import { clientesService, ClienteResumenBackend } from "@/lib/api/clientes"
 
-// Datos simulados de clientes
-const clientes = [
-  {
-    id: 1,
-    nombre: "María González",
-    email: "maria@email.com",
-    telefono: "+34 612 345 678",
-    avatar: "https://images.unsplash.com/photo-1494790108755-2616b612b786?w=50&h=50&fit=crop",
-    fechaRegistro: "2024-01-10",
-    totalPedidos: 5,
-    totalGastado: 2450.75,
-    ultimoPedido: "2024-01-15",
-    estado: "activo",
-    direccion: "Asunción, Paraguay",
-  },
-  {
-    id: 2,
-    nombre: "Carlos Ruiz",
-    email: "carlos@email.com",
-    telefono: "+34 698 765 432",
-    avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop",
-    fechaRegistro: "2023-12-15",
-    totalPedidos: 3,
-    totalGastado: 1899.97,
-    ultimoPedido: "2024-01-15",
-    estado: "activo",
-    direccion: "Ciudad del Este, Paraguay",
-  },
-  {
-    id: 3,
-    nombre: "Ana López",
-    email: "ana@email.com",
-    telefono: "+34 655 123 789",
-    avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=50&h=50&fit=crop",
-    fechaRegistro: "2023-11-20",
-    totalPedidos: 8,
-    totalGastado: 3200.45,
-    ultimoPedido: "2024-01-14",
-    estado: "vip",
-    direccion: "Luque, Paraguay",
-  },
-  {
-    id: 4,
-    nombre: "Pedro Martín",
-    email: "pedro@email.com",
-    telefono: "+34 677 888 999",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop",
-    fechaRegistro: "2023-10-05",
-    totalPedidos: 2,
-    totalGastado: 1299.98,
-    ultimoPedido: "2024-01-14",
-    estado: "activo",
-    direccion: "San Lorenzo, Paraguay",
-  },
-  {
-    id: 5,
-    nombre: "Laura Fernández",
-    email: "laura@email.com",
-    telefono: "+34 644 555 666",
-    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=50&h=50&fit=crop",
-    fechaRegistro: "2023-09-12",
-    totalPedidos: 1,
-    totalGastado: 199.99,
-    ultimoPedido: "2023-12-20",
-    estado: "inactivo",
-    direccion: "Lambaré, Paraguay",
-  },
-]
+interface ClienteResumen {
+  id: number
+  nombre: string
+  email: string
+  telefono?: string
+  avatar?: string
+  fechaRegistro: string
+  totalPedidos: number
+  totalGastado: number
+  ultimoPedido: string
+  estado: string
+  direccion?: string
+}
 
 export default function ClientesTiendaPage() {
+  const { storeInfo } = useProfileType()
   const [busqueda, setBusqueda] = useState("")
+  const [clientes, setClientes] = useState<ClienteResumen[]>([])
+  const [loading, setLoading] = useState<boolean>(false)
 
+  useEffect(() => {
+    const tiendaId = storeInfo?.id
+    if (!tiendaId) return
+
+    setLoading(true)
+    clientesService
+      .getClientesByTienda(tiendaId)
+      .then((list: ClienteResumenBackend[]) => {
+        // El backend ya devuelve agregación y estado; normalizar y ordenar por último pedido
+        const finalList: ClienteResumen[] = list.map((c) => ({
+          id: c.id,
+          nombre: c.nombre,
+          email: c.email,
+          telefono: c.telefono,
+          avatar: c.avatar || "/placeholder-user.jpg",
+          fechaRegistro: new Date(c.fechaRegistro).toISOString(),
+          totalPedidos: c.totalPedidos,
+          totalGastado: c.totalGastado,
+          ultimoPedido: new Date(c.ultimoPedido).toISOString(),
+          estado: c.estado,
+          direccion: c.direccion,
+        }))
+        finalList.sort((a, b) => new Date(b.ultimoPedido).getTime() - new Date(a.ultimoPedido).getTime())
+        setClientes(finalList)
+      })
+      .catch(() => setClientes([]))
+      .finally(() => setLoading(false))
+  }, [storeInfo?.id])
   const clientesFiltrados = clientes.filter(
     (cliente) =>
       cliente.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -110,13 +88,10 @@ export default function ClientesTiendaPage() {
     })
   }
 
-  const contarPorEstado = (estado: string) => {
-    return clientes.filter((c) => c.estado === estado).length
-  }
-
+  const contarPorEstado = (estado: string) => clientes.filter((c) => c.estado === estado).length
   const totalClientes = clientes.length
   const totalIngresos = clientes.reduce((sum, cliente) => sum + cliente.totalGastado, 0)
-  const promedioGasto = totalIngresos / totalClientes
+  const promedioGasto = totalClientes > 0 ? totalIngresos / totalClientes : 0
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -244,21 +219,21 @@ export default function ClientesTiendaPage() {
                               </div>
                             </div>
 
-                            <div className="grid md:grid-cols-3 gap-4 text-sm">
-                              <div className="bg-muted/50 p-3 rounded-lg">
-                                <p className="font-medium">Total Pedidos</p>
-                                <p className="text-xl font-bold">{cliente.totalPedidos}</p>
-                              </div>
-                              <div className="bg-muted/50 p-3 rounded-lg">
-                                <p className="font-medium">Total Gastado</p>
-                                <p className="text-xl font-bold">${cliente.totalGastado.toFixed(2)}</p>
-                              </div>
-                              <div className="bg-muted/50 p-3 rounded-lg">
-                                <p className="font-medium">Último Pedido</p>
-                                <p className="text-xl font-bold">{formatDate(cliente.ultimoPedido)}</p>
-                              </div>
+                          <div className="grid md:grid-cols-3 gap-4 text-sm">
+                            <div className="bg-muted/50 p-3 rounded-lg">
+                              <p className="font-medium">Total Pedidos</p>
+                              <p className="text-xl font-bold">{cliente.totalPedidos}</p>
+                            </div>
+                            <div className="bg-muted/50 p-3 rounded-lg">
+                              <p className="font-medium">Total Gastado</p>
+                              <p className="text-xl font-bold">{cliente.totalGastado.toLocaleString("es-PY")}</p>
+                            </div>
+                            <div className="bg-muted/50 p-3 rounded-lg">
+                              <p className="font-medium">Último Pedido</p>
+                              <p className="text-xl font-bold">{formatDate(cliente.ultimoPedido)}</p>
                             </div>
                           </div>
+                        </div>
 
                           <div className="flex flex-col gap-2">
                             <Button variant="outline" size="sm">
@@ -276,6 +251,10 @@ export default function ClientesTiendaPage() {
                   </div>
                 ))}
               </div>
+
+              {loading && (
+                <div className="text-center py-4 text-sm text-muted-foreground">Cargando clientes…</div>
+              )}
 
               {clientesFiltrados.length === 0 && (
                 <div className="text-center py-8">

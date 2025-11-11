@@ -18,7 +18,7 @@ export default function TestAuthPage() {
     try {
       console.log('🔄 Iniciando prueba de login...')
       
-      const response = await fetch('http://localhost:8001/api/auth/login', {
+      const response = await fetch('http://localhost:8010/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -43,7 +43,7 @@ export default function TestAuthPage() {
       if (data.success && data.data?.access_token) {
         console.log('🔄 Probando endpoint /me...')
         
-        const meResponse = await fetch('http://localhost:8001/api/auth/me', {
+        const meResponse = await fetch('http://localhost:8010/api/auth/me', {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

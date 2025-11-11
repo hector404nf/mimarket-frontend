@@ -4,6 +4,7 @@
 export class BehaviorTracker {
   private static instance: BehaviorTracker
   private storageKey = "user-behavior-data"
+  private sessionKey = "behavior-session-id"
 
   public static getInstance(): BehaviorTracker {
     // Guard against SSR
@@ -130,6 +131,24 @@ export class BehaviorTracker {
     return this.getEmptyBehaviorData()
   }
 
+  // Limpiar todo el historial de comportamiento
+  public clearAll(): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem(this.storageKey)
+      } catch (error) {
+        console.error("Error clearing behavior data:", error)
+      }
+    }
+  }
+
+  // Limpiar solo el historial de búsquedas
+  public clearSearches(): void {
+    const data = this.getBehaviorData()
+    data.searches = []
+    this.saveBehaviorData(data)
+  }
+
   // Obtener productos más vistos
   public getMostViewedProducts(limit = 10): ProductViewData[] {
     const data = this.getBehaviorData()
@@ -240,6 +259,75 @@ export class BehaviorTracker {
       cartActions: [],
     }
   }
+
+  // Obtener/crear un ID de sesión para agregación
+  public getSessionId(): string {
+    if (typeof window === "undefined") return "ssr"
+    try {
+      let id = localStorage.getItem(this.sessionKey)
+      if (!id) {
+        id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        localStorage.setItem(this.sessionKey, id)
+      }
+      return id
+    } catch {
+      return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    }
+  }
+
+  // Construir un resumen agregable para sincronización con backend
+  public getAggregatedSummary(): BehaviorSummary {
+    const data = this.getBehaviorData()
+    const date = new Date()
+    const isoDate = date.toISOString().slice(0, 10)
+
+    // Agregar métricas por producto
+    const productMetrics: BehaviorProductMetrics[] = Object.entries(data.productViews).map(([productId, viewData]) => {
+      const clicksForProduct = data.clicks.filter((c) => c.type === "product" && c.id === Number(productId)).length
+      const addToCartForProduct = data.cartActions.filter((a) => a.productId === Number(productId) && a.action === "add").length
+      const avg = viewData.viewCount > 0 ? Math.round(viewData.totalDuration / viewData.viewCount) : 0
+      return {
+        product_id: Number(productId),
+        views_count: viewData.viewCount,
+        total_duration_ms: viewData.totalDuration,
+        avg_duration_ms: avg,
+        add_to_cart_count: addToCartForProduct,
+        clicks_count: clicksForProduct,
+      }
+    })
+
+    // Agregar métricas por tienda
+    const storeMetrics: BehaviorStoreMetrics[] = Object.entries(data.storeViews).map(([storeId, viewData]) => {
+      const avg = viewData.viewCount > 0 ? Math.round(viewData.totalDuration / viewData.viewCount) : 0
+      return {
+        store_id: Number(storeId),
+        views_count: viewData.viewCount,
+        total_duration_ms: viewData.totalDuration,
+        avg_duration_ms: avg,
+      }
+    })
+
+    // Agregar métricas por término de búsqueda
+    const searchCounts = new Map<string, number>()
+    data.searches.forEach((s) => {
+      const key = s.query.trim().toLowerCase()
+      searchCounts.set(key, (searchCounts.get(key) || 0) + 1)
+    })
+    const searchMetrics: BehaviorSearchMetrics[] = Array.from(searchCounts.entries()).map(([term, count]) => ({
+      term,
+      search_count: count,
+      result_clicks: 0,
+      conversion_rate: 0,
+    }))
+
+    return {
+      session_id: this.getSessionId(),
+      date: isoDate,
+      product_metrics: productMetrics,
+      store_metrics: storeMetrics,
+      search_metrics: searchMetrics,
+    }
+  }
 }
 
 // Tipos para datos de comportamiento
@@ -288,4 +376,36 @@ export interface CartActionData {
 export interface CategoryInterest {
   category: string
   score: number
+}
+
+// Tipos para resumen agregado
+export interface BehaviorSummary {
+  session_id: string
+  date: string
+  product_metrics: BehaviorProductMetrics[]
+  store_metrics: BehaviorStoreMetrics[]
+  search_metrics: BehaviorSearchMetrics[]
+}
+
+export interface BehaviorProductMetrics {
+  product_id: number
+  views_count: number
+  total_duration_ms: number
+  avg_duration_ms: number
+  add_to_cart_count?: number
+  clicks_count?: number
+}
+
+export interface BehaviorStoreMetrics {
+  store_id: number
+  views_count: number
+  total_duration_ms: number
+  avg_duration_ms: number
+}
+
+export interface BehaviorSearchMetrics {
+  term: string
+  search_count: number
+  result_clicks?: number
+  conversion_rate?: number
 }
