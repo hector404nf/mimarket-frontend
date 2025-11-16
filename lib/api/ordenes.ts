@@ -28,6 +28,8 @@ export interface OrdenBackend {
   metodo_pago?: string
   direccion_envio?: string
   notas?: string
+  comprobante_transferencia_url?: string
+  comprobante_url?: string
   detalles: OrdenDetalle[]
   user?: {
     id: number

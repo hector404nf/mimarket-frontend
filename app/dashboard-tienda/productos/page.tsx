@@ -15,6 +15,7 @@ import { useProductosByTienda } from "@/hooks/useProductos"
 import { productosService } from "@/lib/api/productos"
 import { toast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { normalizeImageUrl } from "@/lib/image-utils"
 
 export default function ProductosTiendaPage() {
   const [busqueda, setBusqueda] = useState("")
@@ -69,7 +70,7 @@ export default function ProductosTiendaPage() {
     const todasLasImagenes = getImagenes(producto)
     const key = producto.id_producto || producto.id
     const imagenActual = imagenesActuales[key] || 0
-    return todasLasImagenes[imagenActual] || "/placeholder.svg"
+    return normalizeImageUrl(todasLasImagenes[imagenActual])
   }
 
   const getImagenes = (producto: any) => {

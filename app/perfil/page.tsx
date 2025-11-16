@@ -45,6 +45,9 @@ import { productos } from "@/lib/data"
 import { tiendas } from "@/lib/stores-data"
 import { useAuth } from "@/contexts/auth-context"
 import { ordenesService, OrdenBackend } from "@/lib/api/ordenes"
+import { productosService } from "@/lib/api/productos"
+import { formatearPrecioParaguayo } from "@/lib/utils"
+import { normalizeImageUrl } from "@/lib/image-utils"
 import { metodosPagoService, MetodoPagoBackend } from "@/lib/api/metodos-pago"
 
 // Órdenes del backend
@@ -164,22 +167,38 @@ export default function PerfilPage() {
       setOrdersError("")
       try {
         const data: OrdenBackend[] = await ordenesService.getOrdenesByUsuario(user.id)
-        const mapped: OrdenUI[] = data.map((o) => {
-          const nombres = (o.detalles || [])
-            .map((d) => d.producto?.nombre)
-            .filter(Boolean) as string[]
-          const productosTexto = nombres.length > 0 ? nombres.join(", ") : `${o.detalles?.length || 0} productos`
-          const firstImg = (o.detalles?.[0]?.producto?.imagen_principal_url || o.detalles?.[0]?.producto?.imagen_url || "/placeholder.svg")
-          return {
-            idOrden: o.id_orden,
-            numero: o.numero_orden,
-            fecha: new Date(o.created_at).toLocaleDateString(),
-            total: normalizeNumber(o.total),
-            estado: o.estado || "confirmado",
-            productosTexto,
-            imagen: firstImg,
-          }
-        })
+        const mapped: OrdenUI[] = await Promise.all(
+          data.map(async (o) => {
+            const nombres = (o.detalles || [])
+              .map((d) => d.producto?.nombre)
+              .filter(Boolean) as string[]
+            const productosTexto = nombres.length > 0 ? nombres.join(", ") : `${o.detalles?.length || 0} productos`
+            const p = o.detalles?.[0]?.producto as any
+            let firstImg = p?.imagen_principal || p?.imagen || p?.imagenes_adicionales?.[0]?.thumb_url || p?.imagenes_adicionales?.[0]?.url || ""
+            if (!firstImg) {
+              const pid = o.detalles?.[0]?.id_producto
+              if (pid) {
+                try {
+                  const { data: full } = await productosService.getProducto(Number(pid))
+                  firstImg = full?.imagen || (Array.isArray(full?.imagenes) ? full.imagenes[0] : "")
+                } catch {
+                  firstImg = "/placeholder.svg"
+                }
+              } else {
+                firstImg = "/placeholder.svg"
+              }
+            }
+            return {
+              idOrden: o.id_orden,
+              numero: o.numero_orden,
+              fecha: new Date(o.created_at).toLocaleDateString(),
+              total: normalizeNumber(o.total),
+              estado: o.estado || "confirmado",
+              productosTexto,
+              imagen: firstImg,
+            }
+          })
+        )
         setOrders(mapped)
       } catch (err) {
         console.error("Error cargando órdenes:", err)
@@ -356,10 +375,8 @@ export default function PerfilPage() {
   const sidebarItems = [
     { id: "pedidos", label: "Mis Pedidos", icon: Package },
     { id: "pagos", label: "Métodos de Pago", icon: CreditCard },
-    { id: "direcciones", label: "Direcciones", icon: MapPin },
     { id: "favoritos", label: "Favoritos", icon: Heart },
     { id: "configuracion", label: "Configuración", icon: Settings },
-    { id: "ayuda", label: "Ayuda", icon: HelpCircle },
     { id: "logout", label: "Cerrar Sesión", icon: LogOut },
   ]
 
@@ -504,7 +521,7 @@ export default function PerfilPage() {
                           <div className="flex flex-col sm:flex-row gap-4">
                             <div className="relative h-16 w-16 md:h-20 md:w-20 rounded-lg bg-muted overflow-hidden flex-shrink-0">
                               <Image
-                                src={pedido.imagen || "/placeholder.svg"}
+                                src={normalizeImageUrl(pedido.imagen)}
                                 alt="Producto"
                                 fill
                                 className="object-cover"
@@ -521,7 +538,7 @@ export default function PerfilPage() {
                                   <p className="text-xs md:text-sm text-muted-foreground">{pedido.productosTexto}</p>
                                 </div>
                                 <div className="text-right flex-shrink-0">
-                                  <p className="font-semibold text-sm md:text-base">${pedido.total.toFixed(2)}</p>
+                                  <p className="font-semibold text-sm md:text-base">{formatearPrecioParaguayo(pedido.total)}</p>
                                   <p className="text-xs md:text-sm text-muted-foreground">{pedido.fecha}</p>
                                 </div>
                               </div>
@@ -529,9 +546,6 @@ export default function PerfilPage() {
                               <div className="flex flex-col sm:flex-row gap-2">
                                 <Button variant="outline" size="sm" asChild className="w-full sm:w-auto bg-transparent">
                                   <Link href={`/perfil/pedidos/${pedido.idOrden}`}>Ver detalles</Link>
-                                </Button>
-                                <Button variant="outline" size="sm" className="w-full sm:w-auto bg-transparent">
-                                  Repetir pedido
                                 </Button>
                               </div>
                             </div>
@@ -681,7 +695,7 @@ export default function PerfilPage() {
                             <p
                               className={`font-semibold text-sm md:text-base ${transaccion.monto > 0 ? "text-green-600" : "text-red-600"}`}
                             >
-                              {transaccion.monto > 0 ? "+" : ""}${Math.abs(transaccion.monto).toFixed(2)}
+                              {transaccion.monto > 0 ? "+" : ""}{formatearPrecioParaguayo(Math.abs(transaccion.monto))}
                             </p>
                           </div>
                         ))}
@@ -824,7 +838,7 @@ export default function PerfilPage() {
                                 />
                               </div>
                               <h3 className="font-medium text-sm md:text-base line-clamp-2 mb-2">{producto.nombre}</h3>
-                              <p className="font-semibold text-sm md:text-base mb-3">${producto.precio.toFixed(2)}</p>
+                              <p className="font-semibold text-sm md:text-base mb-3">{formatearPrecioParaguayo(producto.precio)}</p>
                               <div className="flex gap-2">
                                 <Button size="sm" className="flex-1">
                                   Añadir al carrito

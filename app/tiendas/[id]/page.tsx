@@ -16,12 +16,17 @@ import { formatearPrecioParaguayo } from "@/lib/utils"
 import { CategoryIcon } from "@/lib/category-icons"
 import { useEffect, useState } from "react"
 import { tiendasService, TiendaFrontend } from "@/lib/api/tiendas"
+import { getTiendaStats, ProductoResenasStats } from "@/lib/api/resenas"
+import { normalizeImageUrl } from "@/lib/image-utils"
 import { useProductosByTienda } from "@/hooks/useProductos"
 
 export default function TiendaPage({ params }: { params: { id: string } }) {
   const [tienda, setTienda] = useState<TiendaFrontend | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [storeStats, setStoreStats] = useState<ProductoResenasStats | null>(null)
+  const [openNow, setOpenNow] = useState<boolean | null>(null)
+  const [horarios, setHorarios] = useState<string[]>([])
 
   // Productos de la tienda (datos reales)
   const tiendaIdNum = Number(params.id)
@@ -45,7 +50,9 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
         setError(null)
         const response = await tiendasService.getTiendaById(tiendaIdNum)
         if (!mounted) return
-        setTienda(response.data)
+        const tiendaData = response.data
+        setTienda(tiendaData)
+        setHorarios(Array.isArray(tiendaData.horarios) ? tiendaData.horarios : [])
       } catch (err: any) {
         console.error('Error cargando tienda:', err)
         if (!mounted) return
@@ -55,6 +62,41 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
       }
     }
     if (Number.isFinite(tiendaIdNum)) fetchTienda()
+    return () => { mounted = false }
+  }, [tiendaIdNum])
+
+  useEffect(() => {
+    try {
+      const lines = Array.isArray(horarios) ? horarios : []
+      if (!lines.length) { setOpenNow(null); return }
+      const daysES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+      const today = daysES[new Date().getDay()]
+      const lineToday = lines.find((l) => l.startsWith(today))
+      if (!lineToday) { setOpenNow(null); return }
+      if (/Cerrado/i.test(lineToday)) { setOpenNow(false); return }
+      const times = lineToday.match(/(\d{1,2}):(\d{2})/g) || []
+      if (times.length < 2) { setOpenNow(null); return }
+      const [openStr, closeStr] = times
+      const toMin = (s: string) => { const [hh, mm] = s.split(":").map(Number); return (hh || 0) * 60 + (mm || 0) }
+      const now = new Date(); const currentMin = now.getHours() * 60 + now.getMinutes()
+      setOpenNow(currentMin >= toMin(openStr) && currentMin < toMin(closeStr))
+    } catch { setOpenNow(null) }
+  }, [horarios])
+
+  
+
+  useEffect(() => {
+    let mounted = true
+    const fetchStats = async () => {
+      try {
+        const s = await getTiendaStats(tiendaIdNum)
+        if (!mounted) return
+        setStoreStats(s)
+      } catch {
+        // silencioso
+      }
+    }
+    if (Number.isFinite(tiendaIdNum)) fetchStats()
     return () => { mounted = false }
   }, [tiendaIdNum])
 
@@ -107,8 +149,8 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                   <h1 className="text-3xl font-bold">{tienda?.nombre ?? (loading ? 'Cargando tienda…' : 'Tienda')}</h1>
                   <div className="flex items-center gap-1">
                     <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                    <span className="font-medium">{tienda?.calificacion ?? '-'}</span>
-                    <span className="text-muted-foreground">({tienda?.totalReseñas ?? 0} reseñas)</span>
+                    <span className="font-medium">{storeStats ? storeStats.promedio_calificacion.toFixed(1) : (tienda?.calificacion ?? '-')}</span>
+                    <span className="text-muted-foreground">({storeStats ? storeStats.total_resenas : (tienda?.totalReseñas ?? 0)} reseñas)</span>
                   </div>
                 </div>
                 <p className="text-muted-foreground">{tienda?.descripcion ?? ''}</p>
@@ -142,7 +184,7 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                       >
                         <div className="aspect-square relative bg-muted">
                           <Image
-                            src={producto.imagen || "/placeholder.svg"}
+                            src={normalizeImageUrl(producto.imagen)}
                             alt={producto.nombre}
                             fill
                             className="object-cover group-hover:scale-105 transition-transform"
@@ -217,11 +259,18 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                     <div className="flex items-start gap-3">
                       <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium">Horarios</p>
+                        <p className="text-sm font-medium flex items-center gap-2">Horarios {openNow !== null && (
+                          <Badge className={openNow ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'}>
+                            {openNow ? 'Abierto ahora' : 'Cerrado ahora'}
+                          </Badge>
+                        )}</p>
                         <div className="text-sm text-muted-foreground">
-                          {(tienda?.horarios ?? []).map((horario, index) => (
+                          {(horarios.length > 0 ? horarios : []).map((horario, index) => (
                             <p key={index}>{horario}</p>
                           ))}
+                          {horarios.length === 0 && (
+                            <p>Sin horarios disponibles</p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -229,27 +278,9 @@ export default function TiendaPage({ params }: { params: { id: string } }) {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardContent className="pt-6">
-                  <h3 className="font-semibold mb-4">Estadísticas</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-muted-foreground">Productos</span>
-                      <span className="text-sm font-medium">{productosTienda.length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-muted-foreground">Miembro desde</span>
-                      <span className="text-sm font-medium">{tienda?.fechaRegistro ?? '-'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-muted-foreground">Ventas totales</span>
-                      <span className="text-sm font-medium">{tienda?.ventasTotales ?? 0}+</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              
 
-              <Button className="w-full">Contactar tienda</Button>
+              {/* <Button className="w-full">Contactar tienda</Button> */}
             </div>
           </div>
 

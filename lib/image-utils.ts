@@ -100,6 +100,25 @@ export function getImagenesProducto(producto: any): string[] {
   return imagenes;
 }
 
+export function normalizeImageUrl(url?: string | null): string {
+  try {
+    const u = (url || '').trim()
+    if (!u) return '/placeholder.svg'
+    if (u.startsWith('storage/')) return `/${u}`
+    try {
+      const parsed = new URL(u)
+      if (parsed.hostname === 'localhost' || parsed.hostname.startsWith('127.')) {
+        return parsed.pathname + parsed.search
+      }
+      return u
+    } catch {
+      return u.startsWith('/') ? u : `/${u}`
+    }
+  } catch {
+    return '/placeholder.svg'
+  }
+}
+
 /**
  * Obtiene la imagen principal de un producto
  */

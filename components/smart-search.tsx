@@ -15,6 +15,7 @@ import { busquedasService } from "@/lib/api/busquedas"
 import { useAuth } from "@/contexts/auth-context"
 import { BehaviorTracker } from "@/lib/behavior-tracker"
 import Image from "next/image"
+import { normalizeImageUrl } from "@/lib/image-utils"
 
 export default function SmartSearch({ variant = "full" }: { variant?: "navbar" | "full" }) {
   const router = useRouter()
@@ -483,7 +484,7 @@ export default function SmartSearch({ variant = "full" }: { variant?: "navbar" |
                     >
                       <div className="relative h-32 mb-3">
                         <Image
-                          src={rec.product.imagen || "/placeholder.svg"}
+                          src={normalizeImageUrl(rec.product.imagen)}
                           alt={rec.product.nombre}
                           fill
                           className="object-cover rounded"
@@ -535,7 +536,7 @@ export default function SmartSearch({ variant = "full" }: { variant?: "navbar" |
                       <div className="flex items-start gap-3">
                         <div className="relative h-12 w-12 rounded-full overflow-hidden">
                           <Image
-                            src={rec.store.logo || "/placeholder.svg"}
+                            src={normalizeImageUrl(rec.store.logo)}
                             alt={rec.store.nombre}
                             fill
                             className="object-cover"

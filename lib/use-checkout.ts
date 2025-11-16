@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from '@/lib/axios'
 import { useAuth } from '@/contexts/auth-context'
 import { authService } from '@/lib/auth'
 import { toast } from '@/components/ui/use-toast'
@@ -11,6 +12,7 @@ interface CheckoutData {
   codigo_cupon?: string
   latitud?: number
   longitud?: number
+  comprobante_transferencia?: File | string
 }
 
 interface CheckoutTotals {
@@ -130,32 +132,42 @@ export function useCheckout() {
 
     setIsLoading(true)
     try {
-      const response = await fetch(buildApiUrl('/v1/checkout/process'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(checkoutData)
-      })
+      let dataResponse: CheckoutResponse | null = null
+      if (checkoutData.comprobante_transferencia && checkoutData.comprobante_transferencia instanceof File) {
+        const formData = new FormData()
+        formData.append('metodo_pago', checkoutData.metodo_pago)
+        if (checkoutData.id_metodo_pago) formData.append('id_metodo_pago', String(checkoutData.id_metodo_pago))
+        if (checkoutData.direccion_envio) formData.append('direccion_envio', checkoutData.direccion_envio)
+        if (checkoutData.notas) formData.append('notas', checkoutData.notas)
+        if (checkoutData.codigo_cupon) formData.append('codigo_cupon', checkoutData.codigo_cupon)
+        if (typeof checkoutData.latitud === 'number') formData.append('latitud', String(checkoutData.latitud))
+        if (typeof checkoutData.longitud === 'number') formData.append('longitud', String(checkoutData.longitud))
+        formData.append('comprobante_transferencia', checkoutData.comprobante_transferencia)
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        
-        // Manejar errores específicos
-        if (response.status === 400 && errorData.producto) {
-          toast({
-            title: "Stock insuficiente",
-            description: `${errorData.message}. Stock disponible: ${errorData.stock_disponible}`,
-            variant: "destructive"
-          })
-        } else {
-          throw new Error(errorData.message || 'Error al procesar el pedido')
+        const response = await api.upload<CheckoutResponse>('/v1/checkout/process', formData)
+        dataResponse = (response.data as any)?.data ?? (response.data as any)
+      } else {
+        const response = await fetch(buildApiUrl('/v1/checkout/process'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(checkoutData)
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          if (response.status === 400 && errorData.producto) {
+            toast({ title: "Stock insuficiente", description: `${errorData.message}. Stock disponible: ${errorData.stock_disponible}`, variant: "destructive" })
+          } else {
+            throw new Error(errorData.message || 'Error al procesar el pedido')
+          }
+          return null
         }
-        return null
+        dataResponse = await response.json()
       }
-
-      const data: CheckoutResponse = await response.json()
+      const data: CheckoutResponse = dataResponse as CheckoutResponse
       
       toast({
         title: "¡Pedido realizado con éxito!",

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useProfileType } from "@/hooks/use-profile-type"
 import { clientesService, ClienteResumenBackend } from "@/lib/api/clientes"
+import { normalizeImageUrl } from "@/lib/image-utils"
 
 interface ClienteResumen {
   id: number
@@ -185,7 +186,7 @@ export default function ClientesTiendaPage() {
                     <div className="flex gap-4">
                       <div className="relative h-16 w-16 flex-shrink-0">
                         <Image
-                          src={cliente.avatar || "/placeholder.svg"}
+                          src={normalizeImageUrl(cliente.avatar)}
                           alt={cliente.nombre}
                           fill
                           className="object-cover rounded-full"

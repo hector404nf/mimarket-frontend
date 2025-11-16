@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { useCart } from "@/lib/cart-store"
 import { useCartSync } from "@/hooks/use-cart-sync"
 import { formatearPrecioParaguayo } from "@/lib/utils"
+import { normalizeImageUrl } from "@/lib/image-utils"
 import { useAuth } from "@/contexts/auth-context"
 
 export default function CarritoPage() {
@@ -185,7 +186,7 @@ export default function CarritoPage() {
                               <div className="flex gap-4">
                                 <div className="relative h-20 w-20 flex-shrink-0">
                                   <Image
-                                    src={producto.imagen_principal || "/placeholder.svg"}
+                                    src={normalizeImageUrl(producto.imagen_principal)}
                                     alt={producto.nombre}
                                     fill
                                     className="object-cover rounded-md"

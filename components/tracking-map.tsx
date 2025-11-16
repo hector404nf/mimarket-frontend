@@ -13,6 +13,9 @@ interface TrackingMapProps {
   debug?: boolean
   // Posición externa (por ejemplo, del repartidor) para modo lectura
   originExternal?: LatLng | null
+  manualToggle?: boolean
+  onManualModeChange?: (active: boolean) => void
+  manualRestartSignal?: number
 }
 
 // Simple div icons to avoid asset issues
@@ -32,7 +35,7 @@ const blueIcon = L.divIcon({
   iconAnchor: [11, 11],
 })
 
-export default function TrackingMap({ destination, tracking, onPositionUpdate, debug = false, originExternal = null }: TrackingMapProps) {
+export default function TrackingMap({ destination, tracking, onPositionUpdate, debug = false, originExternal = null, manualToggle = false, onManualModeChange, manualRestartSignal = 0 }: TrackingMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
   const destMarkerRef = useRef<L.Marker | null>(null)
@@ -274,6 +277,24 @@ export default function TrackingMap({ destination, tracking, onPositionUpdate, d
     return () => stopSim()
   }, [manualMode, origin, destination, onPositionUpdate])
 
+  useEffect(() => {
+    if (typeof onManualModeChange === 'function') {
+      onManualModeChange(manualMode)
+    }
+  }, [manualMode, onManualModeChange])
+
+  useEffect(() => {
+    if (!manualToggle) return
+    if (!manualMode) return
+    const seed: LatLng = {
+      lat: destination.lat + (Math.random() - 0.5) * 0.01,
+      lng: destination.lng + (Math.random() - 0.5) * 0.01,
+    }
+    setOrigin(seed)
+    onPositionUpdate?.(seed)
+    setLastFixTime(new Date().toISOString())
+  }, [manualRestartSignal])
+
   // Update origin marker and route when origin changes
   useEffect(() => {
     if (!mapRef.current || !origin) return
@@ -375,6 +396,27 @@ export default function TrackingMap({ destination, tracking, onPositionUpdate, d
   return (
     <div>
       <div ref={containerRef} className="w-full h-80 rounded-lg border border-border" />
+      {manualToggle && (
+        <div className="mt-2">
+          <button
+            className="px-2 py-1 border rounded"
+            onClick={() => {
+              const next = !manualMode
+              setManualMode(next)
+              if (next && watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current)
+                watchIdRef.current = null
+                setWatchActive(false)
+              }
+              if (typeof onManualModeChange === 'function') {
+                onManualModeChange(next)
+              }
+            }}
+          >
+            {manualMode ? "Desactivar modo manual" : "Activar modo manual"}
+          </button>
+        </div>
+      )}
       {debug && (
         <div className="mt-2 p-2 border rounded bg-muted text-xs text-muted-foreground">
           <div className="grid grid-cols-2 gap-2">

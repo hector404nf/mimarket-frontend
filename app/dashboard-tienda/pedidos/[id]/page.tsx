@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { ordenesService, OrdenBackend } from "@/lib/api/ordenes"
 import { ArrowLeft, Package, Truck, CheckCircle } from "lucide-react"
+import { formatearPrecioParaguayo } from "@/lib/utils"
+import Image from "next/image"
 // Eliminado Google Maps; usamos solo el selector de Leaflet/OSM
 const MapSelectorLeaflet = dynamic(() => import("@/components/map-selector-leaflet"), {
   ssr: false,
@@ -32,6 +34,7 @@ export default function DetallePedidoTiendaPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [coords, setCoords] = useState<[number, number] | null>(null)
+  const [updatingEstado, setUpdatingEstado] = useState<boolean>(false)
   // Solo OSM: no se usa Google Maps
 
   useEffect(() => {
@@ -153,6 +156,20 @@ export default function DetallePedidoTiendaPage() {
     }
   }
 
+  const handleChangeEstado = async (nuevoEstado: string) => {
+    if (!orden) return
+    setUpdatingEstado(true)
+    try {
+      const updated = await ordenesService.updateOrdenEstado(orden.id_orden, nuevoEstado)
+      setOrden((prev) => (prev ? { ...prev, estado: updated.estado || nuevoEstado } : prev))
+      toast('Estado actualizado', { description: `Nuevo estado: ${updated.estado || nuevoEstado}` })
+    } catch (e: any) {
+      toast('No se pudo actualizar', { description: e?.message || 'Intenta nuevamente' })
+    } finally {
+      setUpdatingEstado(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <Navbar />
@@ -191,7 +208,7 @@ export default function DetallePedidoTiendaPage() {
                       {orden.metodo_pago && (
                         <p><span className="font-medium">Método de pago:</span> {orden.metodo_pago}</p>
                       )}
-                      <p><span className="font-medium">Total:</span> ${Number(orden.total).toFixed(2)}</p>
+                      <p><span className="font-medium">Total:</span> {formatearPrecioParaguayo(Number(orden.total))}</p>
                     </div>
                     <div>
                       <p><span className="font-medium">Cliente:</span> {orden.user?.name || "-"}</p>
@@ -201,6 +218,22 @@ export default function DetallePedidoTiendaPage() {
                       )}
                     </div>
                   </div>
+
+                  {((orden.metodo_pago || '').toLowerCase().includes('transfer')) && (
+                    <div className="mb-6 space-y-3">
+                      <h3 className="text-base font-semibold">Comprobante de transferencia</h3>
+                      {(() => {
+                        const url = (orden as any).comprobante_transferencia_url || (orden as any).comprobante_url || (orden as any).transferencia_comprobante_url || null
+                        return url ? (
+                          <div className="border rounded-md overflow-hidden w-full max-w-xl">
+                            <Image src={url} alt="Comprobante de transferencia" width={800} height={600} className="object-contain bg-black/5" />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No hay comprobante disponible</p>
+                        )
+                      })()}
+                    </div>
+                  )}
 
                   {orden.direccion_envio && (
                     <div className="mb-6 space-y-3">
@@ -314,10 +347,10 @@ export default function DetallePedidoTiendaPage() {
                             <div className="h-12 w-12 bg-muted rounded" />
                             <div>
                               <p className="text-sm font-medium">{d.producto?.nombre || `Producto ${d.id_producto}`}</p>
-                              <p className="text-xs text-muted-foreground">{d.cantidad} x ${Number(d.precio_unitario ?? d.producto?.precio ?? 0).toFixed(2)}</p>
+                              <p className="text-xs text-muted-foreground">{d.cantidad} x {formatearPrecioParaguayo(Number(d.precio_unitario ?? d.producto?.precio ?? 0))}</p>
                             </div>
                           </div>
-                          <div className="text-sm font-medium">${Number(d.subtotal ?? (d.cantidad * (d.precio_unitario ?? d.producto?.precio ?? 0))).toFixed(2)}</div>
+                          <div className="text-sm font-medium">{formatearPrecioParaguayo(Number(d.subtotal ?? (d.cantidad * (d.precio_unitario ?? d.producto?.precio ?? 0))))}</div>
                         </div>
                       ))}
                     </div>
@@ -329,16 +362,32 @@ export default function DetallePedidoTiendaPage() {
                 <CardHeader>
                   <CardTitle>Acciones</CardTitle>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-2">
-                  <Button asChild variant="outline">
-                    <Link href={`/dashboard-tienda/pedidos/${orden.id_orden}`}>Actualizar estado desde lista</Link>
-                  </Button>
+                <CardContent className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
+                    {orden.estado === 'pendiente' && (
+                      <div className="flex gap-2">
+                        <Button disabled={updatingEstado} onClick={() => handleChangeEstado('procesando')}>Procesar</Button>
+                        <Button variant="destructive" disabled={updatingEstado} onClick={() => handleChangeEstado('cancelado')}>Rechazar</Button>
+                      </div>
+                    )}
+                    {orden.estado === 'procesando' && (
+                      <div className="flex gap-2">
+                        <Button disabled={updatingEstado} onClick={() => handleChangeEstado('enviado')}>Marcar como Enviado</Button>
+                        <Button variant="destructive" disabled={updatingEstado} onClick={() => handleChangeEstado('cancelado')}>Cancelar</Button>
+                      </div>
+                    )}
+                    {orden.estado === 'enviado' && (
+                      <div className="flex gap-2">
+                        <Button disabled={updatingEstado} onClick={() => handleChangeEstado('entregado')}>Marcar como Entregado</Button>
+                      </div>
+                    )}
+                    {(orden.estado === 'entregado' || orden.estado === 'cancelado') && (
+                      <div className="text-xs text-muted-foreground">El pedido está {orden.estado}. No hay acciones disponibles.</div>
+                    )}
+                  </div>
                   <Button asChild>
                     <Link href={`/dashboard-tienda/pedidos/${orden.id_orden}/seguimiento`}>Seguir pedido en mapa</Link>
                   </Button>
-                  <p className="text-xs text-muted-foreground">
-                    Usa la lista para cambiar el estado del pedido. Aquí mostramos la información completa del pedido.
-                  </p>
                 </CardContent>
               </Card>
             </div>

@@ -417,9 +417,9 @@ export default function ProductoPage() {
                     <ShoppingCart className="h-4 w-4 mr-2" />
                     {producto.tipoVenta === "delivery" ? "Pedir ahora" : "Añadir al carrito"}
                   </Button>
-                  <Button variant="outline" size="lg">
+                  {/* <Button variant="outline" size="lg">
                     Comprar ahora
-                  </Button>
+                  </Button> */}
                 </div>
               </div>
 

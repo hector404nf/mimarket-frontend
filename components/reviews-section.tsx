@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
+import { normalizeImageUrl } from "@/lib/image-utils"
 import { ThumbsUp, MessageCircle, Shield, Star } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,8 @@ import {
   createResena,
   getByProducto,
   getProductoStats,
+  getByTienda,
+  getTiendaStats,
   ProductoResenasStats,
   Resena,
   getResenaLikes,
@@ -45,18 +48,29 @@ export default function ReviewsSection({ productId, storeId, type = "product" }:
   const [replyText, setReplyText] = useState<Record<number, string>>({})
   const [isReplySubmitting, setIsReplySubmitting] = useState<Record<number, boolean>>({})
 
-  // Cargar reseñas reales desde backend (solo para producto)
+  // Cargar reseñas reales desde backend (producto o tienda)
   useEffect(() => {
     const load = async () => {
-      if (type !== "product" || !productId) return
       try {
         setIsLoading(true)
-        const [list, s] = await Promise.all([
-          getByProducto(productId),
-          getProductoStats(productId),
-        ])
-        setItems(list)
-        setStats(s)
+        if (type === "product" && productId) {
+          const [list, s] = await Promise.all([
+            getByProducto(productId),
+            getProductoStats(productId),
+          ])
+          setItems(list)
+          setStats(s)
+        } else if (type === "store" && storeId) {
+          const [list, s] = await Promise.all([
+            getByTienda(storeId),
+            getTiendaStats(storeId),
+          ])
+          setItems(list)
+          setStats(s)
+        } else {
+          setItems([])
+          setStats(null)
+        }
       } catch (err) {
         toast.error("No se pudieron cargar las reseñas")
       } finally {
@@ -64,7 +78,7 @@ export default function ReviewsSection({ productId, storeId, type = "product" }:
       }
     }
     load()
-  }, [productId, type])
+  }, [productId, storeId, type])
 
   // Cargar likes por reseña tras obtener items
   useEffect(() => {
@@ -268,39 +282,41 @@ export default function ReviewsSection({ productId, storeId, type = "product" }:
       </Card>
 
       {/* Formulario para nueva reseña */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Escribir una reseña</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="text-sm font-medium mb-2 block">Tu calificación</label>
-            <RatingStars rating={newRating} size="lg" interactive onRatingChange={setNewRating} />
-          </div>
+      {type === "product" && productId ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Escribir una reseña</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Tu calificación</label>
+              <RatingStars rating={newRating} size="lg" interactive onRatingChange={setNewRating} />
+            </div>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block">Tu comentario</label>
-            <Textarea
-              placeholder={`Comparte tu experiencia con este ${type === "product" ? "producto" : "tienda"}...`}
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              className="min-h-[100px] resize-none"
-            />
-            <p className="text-xs text-muted-foreground mt-1">Mínimo 10 caracteres ({newComment.length}/10)</p>
-          </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Tu comentario</label>
+              <Textarea
+                placeholder={`Comparte tu experiencia con este producto...`}
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                className="min-h-[100px] resize-none"
+              />
+              <p className="text-xs text-muted-foreground mt-1">Mínimo 10 caracteres ({newComment.length}/10)</p>
+            </div>
 
-          <Button
-            onClick={handleSubmitReview}
-            disabled={isSubmitting || newRating === 0 || newComment.trim().length < 10}
-            className="w-full"
-          >
-            {isSubmitting ? "Enviando..." : "Publicar reseña"}
-          </Button>
-          {!isAuthenticated && (
-            <p className="text-xs text-muted-foreground text-center">Debes iniciar sesión para publicar reseñas.</p>
-          )}
-        </CardContent>
-      </Card>
+            <Button
+              onClick={handleSubmitReview}
+              disabled={isSubmitting || newRating === 0 || newComment.trim().length < 10}
+              className="w-full"
+            >
+              {isSubmitting ? "Enviando..." : "Publicar reseña"}
+            </Button>
+            {!isAuthenticated && (
+              <p className="text-xs text-muted-foreground text-center">Debes iniciar sesión para publicar reseñas.</p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Lista de reseñas */}
       <div className="space-y-4">
@@ -321,7 +337,7 @@ export default function ReviewsSection({ productId, storeId, type = "product" }:
                   <div className="flex gap-4">
                     <div className="relative h-10 w-10 flex-shrink-0">
                       <Image
-                        src={review.userAvatar || "/placeholder.svg"}
+                        src={normalizeImageUrl(review.userAvatar)}
                         alt={review.userName}
                         fill
                         className="object-cover rounded-full"

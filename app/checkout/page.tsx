@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator"
 import { useCart } from "@/lib/cart-store"
 import { useCheckout } from "@/lib/use-checkout"
 import { metodosPagoService, MetodoPagoBackend } from "@/lib/api/metodos-pago"
+import { tiendasService } from "@/lib/api/tiendas"
 import { useAuth } from "@/contexts/auth-context"
 import { toast } from "@/components/ui/use-toast"
 import { getDeliveryPriceForLocation } from "@/lib/delivery-zone-detector"
@@ -81,6 +82,9 @@ export default function CheckoutPage() {
   const [storeDeliveryMethods, setStoreDeliveryMethods] = useState<StoreDeliveryMethod[]>([])
   const [deliveryMethod, setDeliveryMethod] = useState("")
   const [selectedPremiumServices, setSelectedPremiumServices] = useState<string[]>([])
+  const [transferProofFile, setTransferProofFile] = useState<File | null>(null)
+  const [transferProofPreview, setTransferProofPreview] = useState<string>("")
+  const [bankInfoByStore, setBankInfoByStore] = useState<Record<number, { bancoNombre?: string; bancoCuenta?: string; bancoTitular?: string; bancoTipo?: string }>>({})
   
   // Estados para datos de tarjeta
   const [cardData, setCardData] = useState({
@@ -173,6 +177,25 @@ export default function CheckoutPage() {
     
     return Array.from(metodos)
   }, [hasDeliveryItems, hasDirectItems, hasPedidoItems])
+
+  useEffect(() => {
+    const fetchBankInfo = async () => {
+      if (paymentMethod !== 'transfer') return
+      if (gruposPorTienda.length === 0) return
+      try {
+        const results = await Promise.all(gruposPorTienda.map(async (g) => {
+          const { data } = await tiendasService.getTiendaById(g.id_tienda)
+          return { tiendaId: g.id_tienda, datos: { bancoNombre: data.bancoNombre, bancoCuenta: data.bancoCuenta, bancoTitular: data.bancoTitular, bancoTipo: data.bancoTipo } }
+        }))
+        const map: Record<number, { bancoNombre?: string; bancoCuenta?: string; bancoTitular?: string; bancoTipo?: string }> = {}
+        results.forEach(r => { map[r.tiendaId] = r.datos })
+        setBankInfoByStore(map)
+      } catch (e) {
+        console.error('Error cargando cuenta bancaria de tienda(s):', e)
+      }
+    }
+    fetchBankInfo()
+  }, [paymentMethod, gruposPorTienda])
 
   useEffect(() => {
     if (isMounted && cartProducts.length === 0) {
@@ -274,6 +297,7 @@ export default function CheckoutPage() {
         latitud,
         longitud,
         id_metodo_pago: selectedMetodoId || undefined,
+        comprobante_transferencia: paymentMethod === 'transfer' && transferProofFile ? transferProofFile : undefined,
       }
 
       const result = await processCheckout(checkoutData)
@@ -310,6 +334,9 @@ export default function CheckoutPage() {
           const hasSaved = !!selectedMetodoId
           const hasManual = cardData.cardNumber && cardData.expiryDate && cardData.cvv && cardData.cardholderName
           return !!paymentMethod && (hasSaved || hasManual)
+        }
+        if (paymentMethod === 'transfer') {
+          return !!transferProofFile
         }
         return !!paymentMethod
       case 3:
@@ -467,13 +494,7 @@ export default function CheckoutPage() {
                             </Label>
                           </div>
 
-                          <div className="flex items-center space-x-2 p-4 border rounded-lg">
-                            <RadioGroupItem value="paypal" id="paypal" />
-                            <Label htmlFor="paypal" className="flex items-center gap-2 flex-1 cursor-pointer">
-                              <div className="h-4 w-4 bg-blue-600 rounded-sm" />
-                              PayPal
-                            </Label>
-                          </div>
+                          
 
                           <div className="flex items-center space-x-2 p-4 border rounded-lg">
                             <RadioGroupItem value="transfer" id="transfer" />
@@ -483,17 +504,54 @@ export default function CheckoutPage() {
                             </Label>
                           </div>
 
-                          {hasDeliveryItems && (
+                          {(hasDeliveryItems || hasDirectItems || hasPedidoItems) && (
                             <div className="flex items-center space-x-2 p-4 border rounded-lg">
                               <RadioGroupItem value="cash" id="cash" />
                               <Label htmlFor="cash" className="flex items-center gap-2 flex-1 cursor-pointer">
                                 <div className="h-4 w-4 bg-orange-600 rounded-sm" />
-                                Efectivo al recibir
+                                Efectivo al recibir o retirar
                               </Label>
                             </div>
                           )}
                         </div>
                       </RadioGroup>
+
+                      {paymentMethod === 'transfer' && (
+                        <div className="mt-6 space-y-4 p-4 border rounded-lg bg-muted/50">
+                          <h4 className="font-medium">Cuenta bancaria de la tienda</h4>
+                          <div className="space-y-3">
+                            {gruposPorTienda.map(grupo => {
+                              const bank = bankInfoByStore[grupo.id_tienda] || {}
+                              return (
+                                <div key={grupo.id_tienda} className="p-3 border rounded-lg">
+                                  <p className="text-sm font-medium">{grupo.nombre_tienda}</p>
+                                  <div className="grid md:grid-cols-2 gap-2 text-sm">
+                                    <span><span className="text-muted-foreground">Banco:</span> {bank.bancoNombre || 'No configurado'}</span>
+                                    <span><span className="text-muted-foreground">Cuenta:</span> {bank.bancoCuenta || 'No configurado'}</span>
+                                    <span><span className="text-muted-foreground">Titular:</span> {bank.bancoTitular || 'No configurado'}</span>
+                                    <span><span className="text-muted-foreground">Tipo:</span> {bank.bancoTipo || '—'}</span>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="transferProof">Subir comprobante de transferencia</Label>
+                            <Input id="transferProof" type="file" accept="image/*" onChange={(e) => {
+                              const file = e.target.files?.[0] || null
+                              setTransferProofFile(file)
+                              setTransferProofPreview(file ? URL.createObjectURL(file) : '')
+                            }} />
+                            {transferProofPreview && (
+                              <div className="mt-2">
+                                <Image src={transferProofPreview} alt="Comprobante" width={320} height={200} className="rounded-md object-cover" />
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground">Este comprobante es obligatorio para continuar</p>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Métodos guardados y datos de tarjeta */}
                       {paymentMethod === "card" && (

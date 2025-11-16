@@ -32,9 +32,13 @@ export default function NotificationsDropdown() {
   // Normaliza URLs antiguas de notificaciones que apuntaban al dashboard
   const normalizeNotificationUrl = (url: string) => {
     if (!url) return url
-    return url.startsWith('/dashboard-tienda/productos/')
+    url = url.startsWith('/dashboard-tienda/productos/')
       ? url.replace('/dashboard-tienda/productos/', '/productos/')
       : url
+    url = url.startsWith('/pedidos/')
+      ? url.replace('/pedidos/', '/perfil/pedidos/')
+      : url
+    return url
   }
 
   // Actualizar la lista cuando se abre el dropdown

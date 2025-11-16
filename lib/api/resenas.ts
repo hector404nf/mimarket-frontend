@@ -163,6 +163,28 @@ export async function getProductoStats(productoId: number): Promise<ProductoRese
   };
 }
 
+// Obtener reseñas agregadas por tienda
+export async function getByTienda(tiendaId: number): Promise<Resena[]> {
+  const res = await api.get<ResenaBackend[]>(`/v1/resenas/tienda/${tiendaId}`);
+  const data = Array.isArray(res.data) ? res.data : (res.data as any)?.data || [];
+  return (data as ResenaBackend[]).map(mapBackendToFrontend);
+}
+
+// Obtener estadísticas agregadas por tienda
+export async function getTiendaStats(tiendaId: number): Promise<ProductoResenasStats> {
+  const res = await api.get<ProductoResenasStats>(`/v1/resenas/tienda/${tiendaId}/stats`);
+  const raw = (res.data as any)?.data ?? res.data;
+  return {
+    total_resenas: Number(raw?.total_resenas || 0),
+    promedio_calificacion: Number(raw?.promedio_calificacion || 0),
+    cinco_estrellas: Number(raw?.cinco_estrellas || 0),
+    cuatro_estrellas: Number(raw?.cuatro_estrellas || 0),
+    tres_estrellas: Number(raw?.tres_estrellas || 0),
+    dos_estrellas: Number(raw?.dos_estrellas || 0),
+    una_estrella: Number(raw?.una_estrella || 0),
+  };
+}
+
 // Crear reseña
 export async function createResena(payload: CreateResenaPayload): Promise<Resena> {
   const res = await api.post<ResenaBackend | ApiResponse<ResenaBackend>>('/v1/resenas', payload);

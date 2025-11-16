@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import dynamic from "next/dynamic"
 import Link from "next/link"
@@ -34,6 +34,9 @@ export default function SeguimientoPedidoPage() {
   const [geoStatus, setGeoStatus] = useState<'unknown'|'granted'|'denied'|'prompt'>('unknown')
   const [geoError, setGeoError] = useState<string | null>(null)
   const [lastUpdateSentAt, setLastUpdateSentAt] = useState<number>(0)
+  const estadoSetRef = useRef(false)
+  const [manualModeActive, setManualModeActive] = useState(false)
+  const [manualRestart, setManualRestart] = useState(0)
 
   const destination = useMemo(() => {
     const latRaw = orden?.direccion_envio_meta?.latitud ?? orden?.envio?.latitud
@@ -108,7 +111,7 @@ export default function SeguimientoPedidoPage() {
     setTracking(true)
     // Opcional: marcar como enviado al iniciar seguimiento
     try {
-      if (orden?.estado === "procesando") {
+      if (orden && !['enviado','entregado','cancelado'].includes((orden.estado || '').toLowerCase())) {
         const updated = await ordenesService.updateOrdenEstado(orderId, "enviado")
         // Preservar metadatos de envío si la respuesta los omite
         setOrden((prev: any) => ({
@@ -116,6 +119,7 @@ export default function SeguimientoPedidoPage() {
           direccion_envio_meta: updated?.direccion_envio_meta ?? prev?.direccion_envio_meta,
           envio: updated?.envio ?? prev?.envio,
         }))
+        estadoSetRef.current = true
       }
     } catch (e) {
       // Silenciar errores de estado
@@ -124,6 +128,24 @@ export default function SeguimientoPedidoPage() {
 
   const handleStopTracking = () => {
     setTracking(false)
+    try {
+      if (currentPos) {
+        void ordenesService.updateTracking(orderId, {
+          latitud: currentPos.lat,
+          longitud: currentPos.lng,
+          fuente: 'store_app',
+          tracking_activo: false,
+        })
+      }
+    } catch {}
+  }
+
+  const handleRestartTracking = () => {
+    if (!manualModeActive) {
+      toast('Modo manual inactivo', { description: 'Activa el modo manual para reiniciar' })
+      return
+    }
+    setManualRestart((c) => c + 1)
   }
 
   const handleMarkDelivered = async () => {
@@ -136,6 +158,16 @@ export default function SeguimientoPedidoPage() {
         envio: updated?.envio ?? prev?.envio,
       }))
       toast('Pedido entregado', { description: 'Se actualizó el estado del pedido' })
+      try {
+        if (currentPos) {
+          await ordenesService.updateTracking(orderId, {
+            latitud: currentPos.lat,
+            longitud: currentPos.lng,
+            fuente: 'store_app',
+            tracking_activo: false,
+          })
+        }
+      } catch {}
     } catch (e: any) {
       toast('Error al entregar', { description: e?.message || 'Intenta nuevamente' })
     }
@@ -219,6 +251,17 @@ export default function SeguimientoPedidoPage() {
                       onPositionUpdate={async (p) => {
                         setCurrentPos(p)
                         if (p) {
+                          try {
+                            if (!estadoSetRef.current && orden && !['enviado','entregado','cancelado'].includes((orden.estado || '').toLowerCase())) {
+                              const updated = await ordenesService.updateOrdenEstado(orderId, 'enviado')
+                              setOrden((prev: any) => ({
+                                ...updated,
+                                direccion_envio_meta: updated?.direccion_envio_meta ?? prev?.direccion_envio_meta,
+                                envio: updated?.envio ?? prev?.envio,
+                              }))
+                              estadoSetRef.current = true
+                            }
+                          } catch {}
                           // Throttle: evitar enviar updates al backend en exceso
                           const now = Date.now()
                           if (now - lastUpdateSentAt < 2000) {
@@ -240,7 +283,10 @@ export default function SeguimientoPedidoPage() {
                           }
                         }
                       }}
-                      debug={true}
+                      debug={false}
+                      manualToggle={true}
+                      onManualModeChange={(active) => setManualModeActive(active)}
+                      manualRestartSignal={manualRestart}
                     />
                     <div className="flex items-center gap-2 mt-4">
                       {!tracking ? (
@@ -252,6 +298,9 @@ export default function SeguimientoPedidoPage() {
                           <Pause className="w-4 h-4 mr-1" /> Pausar seguimiento
                         </Button>
                       )}
+                      <Button variant="outline" onClick={handleRestartTracking} disabled={!manualModeActive}>
+                        Reiniciar seguimiento
+                      </Button>
                       <Button variant="outline" onClick={handleOpenGoogleMaps}>
                         Abrir en Google Maps
                       </Button>

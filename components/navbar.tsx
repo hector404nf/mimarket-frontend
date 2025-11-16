@@ -24,11 +24,6 @@ export default function Navbar() {
   const baseNavItems = [
     { name: "Inicio", href: "/" },
     { name: "Tiendas", href: "/tiendas" },
-    { name: "Electrónica", href: "/?categoria=electronica" },
-    { name: "Ropa", href: "/?categoria=ropa" },
-    { name: "Hogar", href: "/?categoria=hogar" },
-    { name: "Deportes", href: "/?categoria=deportes" },
-    { name: "Belleza", href: "/?categoria=belleza" },
   ]
 
   // Elementos condicionales basados en el estado del usuario
@@ -37,7 +32,8 @@ export default function Navbar() {
   if (!isAuthenticated) {
     conditionalNavItems.push({ name: "Iniciar Sesión", href: "/login" })
   } else {
-    if (needsOnboarding) {
+    // Mostrar "Configurar Perfil" únicamente si el usuario NO ha completado el onboarding
+    if (user?.onboarded === false) {
       conditionalNavItems.push({ name: "Configurar Perfil", href: "/onboarding" })
     } else if (user?.tipo_usuario === 'administrador') {
       conditionalNavItems.push({ name: "Dashboard Admin", href: "/admin-dashboard" })

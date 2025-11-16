@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Link from "next/link"
 import {
   Package,
@@ -121,6 +121,25 @@ export default function DashboardTiendaPage() {
   const [ventasPorMes, setVentasPorMes] = useState<Array<{ mes: string; ventas: number }>>([])
   const [analiticas, setAnaliticas] = useState<AnaliticasTienda | null>(null)
   const [loadingAnaliticas, setLoadingAnaliticas] = useState<boolean>(false)
+
+  const commissionPct = 5
+
+  const resumenDisplay = useMemo(() => {
+    const ingresos = typeof analiticas?.ordenes?.ingresos_tienda === 'number' ? analiticas!.ordenes.ingresos_tienda : 0
+    const totalOrdenes = typeof analiticas?.ordenes?.total === 'number' ? analiticas!.ordenes.total : 0
+    const montoFallback = ingresos > 0 ? ingresos * (commissionPct / 100) : 0
+    const totalFallback = totalOrdenes > 0 ? totalOrdenes : 0
+    const promedioFallback = totalFallback > 0 ? (montoFallback / totalFallback) : 0
+
+    return {
+      monto_total: (resumen?.monto_total ?? 0) > 0 ? (resumen!.monto_total) : montoFallback,
+      total_comisiones: (resumen?.total_comisiones ?? 0) > 0 ? (resumen!.total_comisiones) : totalFallback,
+      pendientes: resumen?.pendientes ?? 0,
+      pagadas: resumen?.pagadas ?? 0,
+      vencidas: resumen?.vencidas ?? 0,
+      promedio_comision: (resumen?.promedio_comision ?? 0) > 0 ? (resumen!.promedio_comision) : promedioFallback,
+    }
+  }, [resumen, analiticas])
 
   useEffect(() => {
     const tiendaId = storeInfo?.id
@@ -321,95 +340,135 @@ export default function DashboardTiendaPage() {
                   Configuración
                 </Link>
               </Button>
-            </div>
           </div>
+        </div>
 
-          {/* Estadísticas principales - conectadas a resumen de comisiones */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Monto de Comisiones</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen
-                    ? "Cargando…"
-                    : formatearPrecioParaguayo(resumen?.monto_total ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {errorResumen ? "Sin datos" : "Total acumulado de comisiones"}
-                </p>
-              </CardContent>
-            </Card>
+        {/* Acciones rápidas */}
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">Acciones Rápidas</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Button asChild className="h-auto p-6 flex-col">
+              <Link href="/subir-producto">
+                <Plus className="h-8 w-8 mb-2" />
+                <span>Añadir Producto</span>
+              </Link>
+            </Button>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total de Comisiones</CardTitle>
-                <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen ? "—" : (resumen?.total_comisiones ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">Comisiones generadas</p>
-              </CardContent>
-            </Card>
+            <Button asChild variant="outline" className="h-auto p-6 flex-col">
+              <Link href="/dashboard-tienda/productos">
+                <Package className="h-8 w-8 mb-2" />
+                <span>Ver Productos</span>
+              </Link>
+            </Button>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pendientes</CardTitle>
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen ? "—" : (resumen?.pendientes ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">Comisiones sin pagar</p>
-              </CardContent>
-            </Card>
+            <Button asChild variant="outline" className="h-auto p-6 flex-col">
+              <Link href="/dashboard-tienda/pedidos">
+                <ShoppingCart className="h-8 w-8 mb-2" />
+                <span>Ver Pedidos</span>
+              </Link>
+            </Button>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pagadas</CardTitle>
-                <Star className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen ? "—" : (resumen?.pagadas ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">Comisiones liquidadas</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Vencidas</CardTitle>
-                <Eye className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen ? "—" : (resumen?.vencidas ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">Comisiones vencidas</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Promedio Comisión</CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {loadingResumen
-                    ? "—"
-                    : formatearPrecioParaguayo(resumen?.promedio_comision ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">Promedio por comisión</p>
-              </CardContent>
-            </Card>
+            <Button asChild variant="outline" className="h-auto p-6 flex-col">
+              <Link href="/dashboard-tienda/clientes">
+                <Users className="h-8 w-8 mb-2" />
+                <span>Gestionar Clientes</span>
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto p-6 flex-col">
+              <Link href="/dashboard-tienda/notificaciones">
+                <Bell className="h-8 w-8 mb-2" />
+                <span>Notificaciones</span>
+              </Link>
+            </Button>
           </div>
+        </div>
+
+        {/* Estadísticas principales - conectadas a resumen de comisiones */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Monto de Comisiones</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen
+                  ? "Cargando…"
+                  : formatearPrecioParaguayo(resumenDisplay.monto_total)}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {errorResumen ? "Sin datos" : "Total acumulado de comisiones"}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total de Comisiones</CardTitle>
+              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen ? "—" : resumenDisplay.total_comisiones}
+              </div>
+              <p className="text-xs text-muted-foreground">Comisiones generadas</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pendientes</CardTitle>
+              <Package className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen ? "—" : resumenDisplay.pendientes}
+              </div>
+              <p className="text-xs text-muted-foreground">Comisiones sin pagar</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pagadas</CardTitle>
+              <Star className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen ? "—" : resumenDisplay.pagadas}
+              </div>
+              <p className="text-xs text-muted-foreground">Comisiones liquidadas</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Vencidas</CardTitle>
+              <Eye className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen ? "—" : resumenDisplay.vencidas}
+              </div>
+              <p className="text-xs text-muted-foreground">Comisiones vencidas</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Promedio Comisión</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {loadingResumen
+                  ? "—"
+                  : formatearPrecioParaguayo(resumenDisplay.promedio_comision)}
+              </div>
+              <p className="text-xs text-muted-foreground">Promedio por comisión</p>
+            </CardContent>
+          </Card>
+        </div>
 
           <Tabs defaultValue="ventas" className="space-y-6">
             <TabsList>
@@ -569,39 +628,7 @@ export default function DashboardTiendaPage() {
             </TabsContent>
           </Tabs>
 
-          {/* Acciones rápidas */}
-          <div className="mt-8">
-            <h2 className="text-xl font-semibold mb-4">Acciones Rápidas</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Button asChild className="h-auto p-6 flex-col">
-                <Link href="/subir-producto">
-                  <Plus className="h-8 w-8 mb-2" />
-                  <span>Añadir Producto</span>
-                </Link>
-              </Button>
-
-              <Button asChild variant="outline" className="h-auto p-6 flex-col">
-                <Link href="/dashboard-tienda/pedidos">
-                  <Package className="h-8 w-8 mb-2" />
-                  <span>Ver Pedidos</span>
-                </Link>
-              </Button>
-
-              <Button asChild variant="outline" className="h-auto p-6 flex-col">
-                <Link href="/dashboard-tienda/notificaciones">
-                  <Bell className="h-8 w-8 mb-2" />
-                  <span>Notificaciones</span>
-                </Link>
-              </Button>
-
-              <Button asChild variant="outline" className="h-auto p-6 flex-col">
-                <Link href="/dashboard-tienda/clientes">
-                  <Users className="h-8 w-8 mb-2" />
-                  <span>Gestionar Clientes</span>
-                </Link>
-              </Button>
-            </div>
-          </div>
+        
         </div>
       </main>
       <Footer />

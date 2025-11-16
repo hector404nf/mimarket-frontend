@@ -30,8 +30,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { useCart } from "@/lib/cart-store"
 import { toast } from "@/components/ui/use-toast"
 import { ordenesService, OrdenBackend, OrdenDetalle } from "@/lib/api/ordenes"
+import { productosService } from "@/lib/api/productos"
 import { storeService } from "@/lib/store"
 import { routingService } from "@/lib/api/routing"
+import { formatearPrecioParaguayo } from "@/lib/utils"
+import { normalizeImageUrl } from "@/lib/image-utils"
 
 const TrackingMap = dynamic(() => import("@/components/tracking-map"), {
   ssr: false,
@@ -59,6 +62,7 @@ interface OrderData {
     coordinates?: [number, number]
   }
   total: number
+  shippingCost?: number
   items: any[]
   status: string
   estimatedDelivery: string
@@ -106,6 +110,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
   const orderId = Number(params.id)
   const [destination, setDestination] = useState<{ lat: number; lng: number } | null>(null)
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null)
+  const [trackingActive, setTrackingActive] = useState<boolean>(false)
   const [etaSec, setEtaSec] = useState<number | null>(null)
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null)
   const [sseSupported, setSseSupported] = useState<boolean>(typeof window !== 'undefined' && 'EventSource' in window)
@@ -130,6 +135,27 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
 
         const customerName = [orden.user?.name, orden.user?.apellido].filter(Boolean).join(" ")
 
+        const enrichedDetalles: OrdenDetalle[] = await Promise.all(
+          (orden.detalles || []).map(async (d: OrdenDetalle) => {
+            const prodId = (d as any).id_producto || (d.producto as any)?.id_producto
+            let producto = d.producto as any
+            if (prodId) {
+              try {
+                const { data: full } = await productosService.getProducto(Number(prodId))
+                const imgPrincipal = full?.imagen || (Array.isArray(full?.imagenes) ? full.imagenes[0] : undefined)
+                const galeria = Array.isArray(full?.imagenes) ? full.imagenes.slice(1) : []
+                producto = {
+                  ...producto,
+                  imagen_principal: imgPrincipal,
+                  imagen: imgPrincipal,
+                  imagenes_adicionales: galeria.map((u: string) => ({ url: u, thumb_url: u })),
+                }
+              } catch {}
+            }
+            return { ...d, producto } as OrdenDetalle
+          })
+        )
+
         const mapped: OrderData = {
           customerInfo: {
             name: customerName || "",
@@ -142,7 +168,8 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
             ? { street: orden.direccion_envio, number: "", city: "", postalCode: "", notes: orden.notas || "" }
             : undefined,
           total: normalizeNumber(orden.total),
-          items: orden.detalles,
+          shippingCost: normalizeNumber((orden as any)?.costo_envio ?? 0),
+          items: enrichedDetalles,
           status: mappedStatus,
           estimatedDelivery: getEstimatedDelivery(orden.detalles),
           orderDate: new Date(orden.created_at).toLocaleString(),
@@ -164,14 +191,12 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
         setOrderData(mapped)
         setCurrentStatus(mappedStatus)
 
-        // Coordenadas de destino (si están disponibles)
         const lat = orden?.direccion_envio_meta?.latitud ?? orden?.envio?.latitud ?? null
         const lng = orden?.direccion_envio_meta?.longitud ?? orden?.envio?.longitud ?? null
         if (lat && lng) {
           setDestination({ lat: Number(lat), lng: Number(lng) })
         }
 
-        // Cargar nombres de tiendas para IDs presentes en los ítems
         const ids = Array.from(
           new Set(
             (orden.detalles || [])
@@ -194,7 +219,6 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                   setStoreNames((prev) => ({ ...prev, [id]: name }))
                 }
               } catch {
-                // Ignorar errores puntuales de carga de tienda
               }
             })
           )
@@ -212,6 +236,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
   useEffect(() => {
     if (!orderId || Number.isNaN(orderId)) return
     if (!destination) return
+    if (currentStatus !== 'en_camino') { setUsePolling(false); setSseConnected(false); return }
 
     let es: EventSource | null = null
     let canceled = false
@@ -239,6 +264,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
             const lat = data?.latitud
             const lng = data?.longitud
             const active = data?.tracking_activo
+            setTrackingActive(!!active)
             if (lat && lng && active) {
               const pos = { lat: Number(lat), lng: Number(lng) }
               setDriverPos(pos)
@@ -270,13 +296,14 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
       canceled = true
       try { es?.close() } catch {}
     }
-  }, [orderId, destination, sseSupported])
+  }, [orderId, destination, sseSupported, currentStatus])
 
   // Polling de tracking (fallback si SSE no está activo)
   useEffect(() => {
     if (!orderId || Number.isNaN(orderId)) return
     if (!destination) return
     if (!usePolling) return
+    if (currentStatus !== 'en_camino') return
 
     let timer: any
     let canceled = false
@@ -287,6 +314,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
         const latStr = snap?.latitud
         const lngStr = snap?.longitud
         const active = snap?.tracking_activo
+        setTrackingActive(!!active)
         if (latStr && lngStr && active) {
           const pos = { lat: Number(latStr), lng: Number(lngStr) }
           setDriverPos(pos)
@@ -314,7 +342,26 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
       canceled = true
       clearInterval(timer)
     }
-  }, [orderId, destination, usePolling])
+  }, [orderId, destination, usePolling, currentStatus])
+
+  useEffect(() => {
+    if (currentStatus !== 'en_camino') return
+    if (!orderId || Number.isNaN(orderId)) return
+    let timer: any
+    let canceled = false
+    const pollEstado = async () => {
+      try {
+        const o = await ordenesService.getOrden(orderId)
+        const mapped = mapBackendStatus(o.estado)
+        if (!canceled && mapped !== currentStatus) {
+          setCurrentStatus(mapped)
+        }
+      } catch {}
+    }
+    timer = setInterval(pollEstado, 5000)
+    pollEstado()
+    return () => { canceled = true; clearInterval(timer) }
+  }, [orderId, currentStatus])
 
   const mapBackendStatus = (estado: string) => {
     const normalized = (estado || "").toLowerCase()
@@ -322,7 +369,8 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
     if (["procesando", "preparando", "preparado"].includes(normalized)) return "preparando"
     if (["enviado", "en_camino", "en_transito", "reparto"].includes(normalized)) return "en_camino"
     if (["entregado", "finalizado"].includes(normalized)) return "entregado"
-    // Estados no cubiertos (cancelado, rechazado, fallido) se muestran como procesando por ahora
+    if (["cancelado", "anulado"].includes(normalized)) return "cancelado"
+    if (["rechazado", "rechazado_pago", "fallido"].includes(normalized)) return "rechazado"
     return "confirmado"
   }
 
@@ -450,11 +498,116 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
     })
   }
 
-  const handleDownloadReceipt = () => {
-    toast({
-      title: "Descargando comprobante",
-      description: "El comprobante se descargará en breve",
-    })
+  const handleDownloadReceipt = async () => {
+    if (!orderData) return
+    try {
+      const { default: JSPDF } = await import('jspdf')
+      const doc = new JSPDF()
+      const pad = 12
+      const pageWidth = doc.internal.pageSize.getWidth()
+      let y = 0
+      const formatGs = (n: number) => `Gs. ${new Intl.NumberFormat('es-PY', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0))}`
+      const stores = extractUniqueStores(orderData.items as any)
+      const storesResolved = stores.map((st) => st.name ?? (st.id && storeNames[st.id]) ?? (st.id ? `Tienda ${st.id}` : 'Tienda'))
+      const headerLeftTitle = storesResolved.length === 1 ? storesResolved[0] : 'Tiendas del pedido'
+
+      doc.setFillColor(17, 24, 39)
+      doc.rect(0, 0, pageWidth, 24, 'F')
+      doc.setTextColor(255, 255, 255)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.text(headerLeftTitle, pad, 14)
+      doc.setFontSize(12)
+      doc.text('Comprobante de Pedido', pageWidth - pad, 14, { align: 'right' })
+      doc.setTextColor(0, 0, 0)
+      y = 30
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(12)
+      doc.text(`Pedido #${orderId}`, pad, y)
+      doc.setFont('helvetica', 'normal')
+      y += 6
+      doc.text(`Fecha: ${orderData.orderDate}`, pad, y)
+      y += 6
+      doc.text(`Cliente: ${orderData.customerInfo.name}`, pad, y)
+      y += 6
+      if (orderData.customerInfo.email) { doc.text(`Email: ${orderData.customerInfo.email}`, pad, y); y += 6 }
+      if (orderData.customerInfo.phone) { doc.text(`Teléfono: ${orderData.customerInfo.phone}`, pad, y); y += 6 }
+      if (orderData.address?.street) { doc.text(`Dirección: ${orderData.address.street}`, pad, y); y += 8 }
+
+      doc.setFont('helvetica', 'bold')
+      doc.text(storesResolved.length > 1 ? 'Tiendas' : 'Tienda', pageWidth / 2, 30)
+      doc.setFont('helvetica', 'normal')
+      let yRight = 36
+      const rightX = pageWidth / 2
+      if (storesResolved.length > 1) {
+        doc.text(storesResolved.join(', '), rightX, yRight)
+        yRight += 8
+      } else {
+        const unica = storesResolved[0] || orderData.storeInfo?.name
+        if (unica) { doc.text(`Nombre: ${unica}`, rightX, yRight); yRight += 6 }
+        if (orderData.storeInfo?.phone) { doc.text(`Teléfono: ${orderData.storeInfo.phone}`, rightX, yRight); yRight += 8 }
+      }
+      doc.text(`Pago: ${orderData.paymentMethod}`, rightX, yRight)
+
+      y = Math.max(y, yRight) + 10
+
+      const colX = [pad, pad + 100, pad + 130, pad + 165]
+      doc.setFillColor(243, 244, 246)
+      doc.rect(pad - 1, y - 6, pageWidth - pad * 2 + 2, 10, 'F')
+      doc.setFont('helvetica', 'bold')
+      doc.text('Producto', colX[0], y)
+      doc.text('Cant.', colX[1], y)
+      doc.text('Precio', colX[2], y)
+      doc.text('Subtotal', colX[3], y)
+      y += 8
+      doc.setFont('helvetica', 'normal')
+
+      const items = (orderData.items as any[]) || []
+      let itemsSubtotal = 0
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i]
+        const nombre = it?.producto?.nombre || `Producto ${it?.id_producto}`
+        const cantidad = Number(it?.cantidad || 0)
+        const precio = Number(it?.precio_unitario ?? 0)
+        const subtotal = Number(it?.subtotal ?? cantidad * precio)
+        itemsSubtotal += subtotal
+        doc.text(String(nombre).slice(0, 50), colX[0], y)
+        doc.text(String(cantidad), colX[1], y)
+        doc.text(formatGs(precio), colX[2], y)
+        doc.text(formatGs(subtotal), colX[3], y)
+        y += 7
+        if (y > 270) { doc.addPage(); y = 20 }
+      }
+
+      y += 4
+      const boxX = pageWidth - pad - 70
+      doc.setFont('helvetica', 'bold')
+      doc.text('Resumen', boxX, y)
+      y += 6
+      doc.setFont('helvetica', 'normal')
+      doc.text('Subtotal:', boxX, y)
+      doc.text(formatGs(itemsSubtotal), pageWidth - pad, y, { align: 'right' })
+      y += 6
+      const envio = Number(orderData.shippingCost || 0)
+      doc.text('Envío:', boxX, y)
+      doc.text(formatGs(envio), pageWidth - pad, y, { align: 'right' })
+      y += 6
+      doc.setFont('helvetica', 'bold')
+      doc.text('Total:', boxX, y)
+      doc.text(formatGs(Number(orderData.total)), pageWidth - pad, y, { align: 'right' })
+
+      doc.setFontSize(10)
+      doc.text('Gracias por tu compra en MiMarket', pad, 290)
+
+      doc.save(`Comprobante_Pedido_${orderId}.pdf`)
+      toast({
+        title: 'Comprobante generado',
+        description: 'Se descargó el PDF del pedido',
+      })
+    } catch (e: any) {
+      toast({ title: 'Error al generar PDF', description: e?.message || 'Intenta nuevamente', variant: 'destructive' })
+    }
   }
 
   const handleSubmitReview = () => {
@@ -495,8 +648,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
   const statusInfo = getStatusInfo(currentStatus)
   const StatusIcon = statusInfo.icon
 
-  const deliveryCost =
-    orderData.deliveryMethod === "delivery" ? 3.99 : orderData.deliveryMethod === "shipping" ? 5.99 : 0
+  const deliveryCost = normalizeNumber(orderData.shippingCost ?? 0)
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -598,7 +750,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
               </Card>
 
               {/* Seguimiento en tiempo real (mapa) */}
-              {destination && (
+              {destination && currentStatus === "en_camino" && trackingActive && (
                 <Card>
                   <CardHeader>
                     <div className="flex items-center justify-between">
@@ -740,7 +892,12 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                         <div key={index} className="flex gap-4 p-4 border rounded-lg">
                           <div className="relative h-16 w-16 md:h-20 md:w-20 flex-shrink-0">
                             <Image
-                              src={producto.imagen_principal_url || producto.imagen_url || "/placeholder.svg"}
+                              src={normalizeImageUrl(
+                                (producto as any)?.imagen_principal ||
+                                (producto as any)?.imagen ||
+                                (producto as any)?.imagenes_adicionales?.[0]?.thumb_url ||
+                                (producto as any)?.imagenes_adicionales?.[0]?.url
+                              )}
                               alt={producto.nombre}
                               fill
                               className="object-cover rounded"
@@ -781,11 +938,11 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                               </div>
                               <div className="text-right flex-shrink-0">
                                 <p className="font-semibold text-sm md:text-base">
-                                  ${(precioFinalUnit * item.cantidad).toFixed(2)}
+                                  {formatearPrecioParaguayo(precioFinalUnit * item.cantidad)}
                                 </p>
                                 {descuento > 0 && producto.precio && (
                                   <p className="text-xs text-muted-foreground line-through">
-                                    ${(producto.precio * item.cantidad).toFixed(2)}
+                                    {formatearPrecioParaguayo(producto.precio * item.cantidad)}
                                   </p>
                                 )}
                               </div>
@@ -824,7 +981,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
               )}
 
               {/* Formulario de reseña */}
-              {currentStatus === "entregado" && (
+              {/* {currentStatus === "entregado" && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg md:text-xl">¿Cómo fue tu experiencia?</CardTitle>
@@ -878,7 +1035,7 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                     )}
                   </CardContent>
                 </Card>
-              )}
+              )} */}
             </div>
 
             {/* Información del pedido */}
@@ -931,13 +1088,13 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
                 <CardContent className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Subtotal</span>
-                    <span>${orderData.total.toFixed(2)}</span>
+                    <span>{formatearPrecioParaguayo(orderData.total)}</span>
                   </div>
 
                   {deliveryCost > 0 && (
                     <div className="flex justify-between text-sm">
                       <span>{orderData.deliveryMethod === "delivery" ? "Delivery" : "Envío"}</span>
-                      <span>${deliveryCost.toFixed(2)}</span>
+                      <span>{formatearPrecioParaguayo(deliveryCost)}</span>
                     </div>
                   )}
 
@@ -945,24 +1102,15 @@ export default function PedidoDetallesPage({ params }: { params: { id: string } 
 
                   <div className="flex justify-between font-semibold">
                     <span>Total</span>
-                    <span>${(orderData.total + deliveryCost).toFixed(2)}</span>
+                    <span>{formatearPrecioParaguayo(orderData.total + deliveryCost)}</span>
                   </div>
                 </CardContent>
               </Card>
 
               <div className="space-y-3">
-                <Button onClick={handleRepeatOrder} className="w-full">
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Repetir pedido
-                </Button>
-
                 <Button variant="outline" onClick={handleDownloadReceipt} className="w-full bg-transparent">
                   <Download className="h-4 w-4 mr-2" />
                   Descargar comprobante
-                </Button>
-
-                <Button variant="outline" className="w-full bg-transparent" asChild>
-                  <Link href="/">Seguir comprando</Link>
                 </Button>
               </div>
             </div>

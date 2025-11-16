@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
+import { normalizeImageUrl } from "@/lib/image-utils"
 import { ChevronRight, Clock, TrendingUp, Store } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -302,7 +303,7 @@ export default function RecommendationsSection({
                 >
                   <div className="aspect-square relative bg-muted rounded-lg overflow-hidden mb-2">
                     <Image
-                      src={product.imagen || "/placeholder.svg"}
+                      src={normalizeImageUrl(product.imagen)}
                       alt={product.nombre}
                       fill
                       className="object-cover group-hover:scale-105 transition-transform"
@@ -390,7 +391,7 @@ export default function RecommendationsSection({
                   className="group flex items-center gap-4 p-4 border rounded-lg hover:shadow-md transition-shadow"
                 >
                   <div className="w-16 h-16 relative bg-muted rounded-lg overflow-hidden">
-                    <Image src={store.logo || "/placeholder.svg"} alt={store.nombre} fill className="object-cover" />
+                    <Image src={normalizeImageUrl(store.logo)} alt={store.nombre} fill className="object-cover" />
                   </div>
                   <div className="flex-1">
                     <h4 className="font-medium group-hover:text-blue-600">{store.nombre}</h4>

@@ -15,8 +15,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { subscribeUser, unsubscribeUser } from "@/lib/push"
+import { storeService } from "@/lib/store"
+import { categoriasService } from "@/lib/api/categorias"
 import { api } from "@/lib/axios"
-import MapSelector from "@/components/map-selector"
+import MapSelectorLeaflet from "@/components/map-selector-leaflet"
 import DeliveryZonesConfigurator from "@/components/delivery-zones-configurator"
 import { useStoreAccess, useProfileType } from "@/hooks/use-profile-type"
 
@@ -27,6 +29,9 @@ interface DeliveryZone {
   estimatedTime: string
   coordinates: Array<{ lat: number; lng: number }>
   color: string
+  shape?: "polygon" | "circle"
+  center?: { lat: number; lng: number }
+  radius?: number
 }
 
 interface StoreConfig {
@@ -36,6 +41,8 @@ interface StoreConfig {
   category: string
   logo: string
   banner: string
+  logoFile?: File | null
+  bannerFile?: File | null
 
   // Contacto
   phone: string
@@ -65,6 +72,10 @@ interface StoreConfig {
 
   // Pagos
   acceptedPayments: string[]
+  bankName: string
+  bankAccountNumber: string
+  bankAccountHolder: string
+  bankAccountType: string
 
   // Notificaciones
   emailNotifications: boolean
@@ -98,7 +109,11 @@ const defaultConfig: StoreConfig = {
   returnPolicy: "",
   shippingPolicy: "",
   privacyPolicy: "",
-  acceptedPayments: ["credit_card", "debit_card", "paypal"],
+  acceptedPayments: ["credit_card", "debit_card", "cash", "bank_transfer"],
+  bankName: "",
+  bankAccountNumber: "",
+  bankAccountHolder: "",
+  bankAccountType: "",
   emailNotifications: true,
   smsNotifications: false,
   pushNotifications: false,
@@ -117,10 +132,8 @@ const daysOfWeek = [
 const paymentMethods = [
   { id: "credit_card", label: "Tarjeta de Crédito" },
   { id: "debit_card", label: "Tarjeta de Débito" },
-  { id: "paypal", label: "PayPal" },
   { id: "bank_transfer", label: "Transferencia Bancaria" },
-  { id: "cash", label: "Efectivo" },
-  { id: "crypto", label: "Criptomonedas" },
+  { id: "cash", label: "Efectivo al recibir o retirar" },
 ]
 
 export default function ConfiguracionTiendaPage() {
@@ -129,23 +142,111 @@ export default function ConfiguracionTiendaPage() {
   const { storeInfo } = useProfileType()
   const [config, setConfig] = useState<StoreConfig>(defaultConfig)
   const [isLoading, setIsLoading] = useState(false)
+  const [categories, setCategories] = useState<{ id: number; nombre: string }[]>([])
 
   useEffect(() => {
-    // Cargar configuración existente si existe
-    const existingConfig = localStorage.getItem("storeConfig")
-    if (existingConfig) {
-      setConfig({ ...defaultConfig, ...JSON.parse(existingConfig) })
-      return
-    }
-    // Usar datos del perfil de tienda del usuario autenticado
-    if (storeInfo) {
-      setConfig((prev) => ({
-        ...prev,
-        storeName: storeInfo.nombre || "",
-        description: storeInfo.descripcion || "",
-        category: storeInfo.categoria || "",
-        // Mantener contacto/dirección por defecto si no hay en store_info
-      }))
+    categoriasService.getCategorias().then((cats) => {
+      setCategories(cats.map((c) => ({ id: c.id, nombre: c.nombre })))
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (storeInfo?.id) {
+      storeService.getStore(storeInfo.id).then(async (res) => {
+        const data = res.data || {}
+        const ct = (data?.configuracion_tienda as any) || {}
+        let horarios = await storeService.getHorarios(storeInfo.id)
+        let zonas = await storeService.getDeliveryZones(storeInfo.id)
+        let metodos = await storeService.getAcceptedPayments(storeInfo.id)
+        const scheduleFromDb: StoreConfig['schedule'] = { ...defaultConfig.schedule }
+        if (Array.isArray(horarios)) {
+          horarios.forEach((h: any) => {
+            const key = String(h.dia_semana)
+            if (scheduleFromDb[key]) {
+              scheduleFromDb[key] = {
+                isOpen: !h.cerrado,
+                openTime: h.hora_apertura || scheduleFromDb[key].openTime,
+                closeTime: h.hora_cierre || scheduleFromDb[key].closeTime,
+              }
+            }
+          })
+        }
+        const deliveryZonesFromDb: DeliveryZone[] = Array.isArray(zonas) ? zonas.map((z: any) => {
+          let coords: Array<{ lat: number; lng: number }> = []
+          let color = '#00AEEF'
+          let center: { lat: number; lng: number } | undefined
+          let radius: number | undefined
+          let shape: "polygon" | "circle" | undefined
+          try {
+            const parsed = z.zona_cobertura ? JSON.parse(z.zona_cobertura) : null
+            if (parsed && typeof parsed.color === 'string') color = parsed.color
+            if (parsed && parsed.center && typeof parsed.center.lat === 'number' && typeof parsed.center.lng === 'number') {
+              center = { lat: Number(parsed.center.lat), lng: Number(parsed.center.lng) }
+              if (typeof parsed.radius === 'number') radius = Number(parsed.radius)
+              shape = 'circle'
+            } else if (parsed && Array.isArray(parsed.coordinates)) {
+              coords = parsed.coordinates
+              shape = 'polygon'
+            }
+          } catch {}
+          if (!center && (z.latitud != null && z.longitud != null)) {
+            const latN = Number(z.latitud)
+            const lngN = Number(z.longitud)
+            if (Number.isFinite(latN) && Number.isFinite(lngN)) {
+              center = { lat: latN, lng: lngN }
+            }
+          }
+          return {
+            id: String(z.id_direccion_envio),
+            name: z.nombre,
+            price: Number(z.precio_envio),
+            estimatedTime: String(z.minutos_entrega),
+            coordinates: coords,
+            color,
+            shape,
+            center,
+            radius,
+          }
+        }) : []
+        const acceptedFromDb: string[] = Array.isArray(metodos) ? metodos.filter((m: any) => m.activo).map((m: any) => String(m.metodo)) : []
+        setConfig((prev) => ({
+          ...prev,
+          storeName: data?.nombre_tienda || storeInfo.nombre || "",
+          description: data?.descripcion || storeInfo.descripcion || "",
+          category: data?.categoria_principal || storeInfo.categoria || "",
+          phone: data?.telefono_contacto || "",
+          email: data?.email_contacto || "",
+          website: data?.sitio_web || "",
+          address: data?.direccion || "",
+          logo: data?.logo || "",
+          banner: data?.banner || "",
+          coordinates: (Number.isFinite(Number(data?.latitud)) && Number.isFinite(Number(data?.longitud)))
+            ? [Number(data.latitud), Number(data.longitud)] as [number, number]
+            : prev.coordinates,
+          schedule: scheduleFromDb,
+          deliveryEnabled: deliveryZonesFromDb.length > 0 ? true : (typeof ct?.deliveryEnabled === 'boolean' ? ct.deliveryEnabled : prev.deliveryEnabled),
+          deliveryZones: deliveryZonesFromDb.length > 0 ? deliveryZonesFromDb : prev.deliveryZones,
+          freeDeliveryMinimum: typeof ct?.freeDeliveryMinimum === 'number' ? ct.freeDeliveryMinimum : prev.freeDeliveryMinimum,
+          acceptedPayments: acceptedFromDb.length > 0 ? acceptedFromDb : prev.acceptedPayments,
+          bankName: typeof data?.banco_nombre === 'string' ? data.banco_nombre : prev.bankName,
+          bankAccountNumber: typeof data?.banco_cuenta === 'string' ? data.banco_cuenta : prev.bankAccountNumber,
+          bankAccountHolder: typeof data?.banco_titular === 'string' ? data.banco_titular : prev.bankAccountHolder,
+          bankAccountType: typeof data?.banco_tipo === 'string' ? data.banco_tipo : prev.bankAccountType,
+          returnPolicy: ct?.policies?.returnPolicy || prev.returnPolicy,
+          shippingPolicy: ct?.policies?.shippingPolicy || prev.shippingPolicy,
+          privacyPolicy: ct?.policies?.privacyPolicy || prev.privacyPolicy,
+          emailNotifications: ct?.notifications?.email ?? prev.emailNotifications,
+          smsNotifications: ct?.notifications?.sms ?? prev.smsNotifications,
+          pushNotifications: ct?.notifications?.push ?? prev.pushNotifications,
+        }))
+      }).catch(() => {
+        setConfig((prev) => ({
+          ...prev,
+          storeName: storeInfo.nombre || "",
+          description: storeInfo.descripcion || "",
+          category: storeInfo.categoria || "",
+        }))
+      })
     }
   }, [storeInfo])
 
@@ -153,11 +254,69 @@ export default function ConfiguracionTiendaPage() {
     setIsLoading(true)
 
     try {
-      // Simular guardado
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (storeInfo?.id) {
+        await storeService.updateStore(storeInfo.id, {
+          nombre_tienda: config.storeName || undefined,
+          descripcion: config.description || undefined,
+          categoria_principal: config.category || undefined,
+          telefono_contacto: config.phone || undefined,
+          email_contacto: config.email || undefined,
+          sitio_web: config.website || undefined,
+          direccion: config.address || undefined,
+          banco_nombre: config.bankName || undefined,
+          banco_cuenta: config.bankAccountNumber || undefined,
+          banco_titular: config.bankAccountHolder || undefined,
+          banco_tipo: config.bankAccountType || undefined,
+          logo: config.logo || undefined,
+          banner: config.banner || undefined,
+          logoFile: config.logoFile || undefined,
+          bannerFile: config.bannerFile || undefined,
+          configuracion_tienda: {
+            freeDeliveryMinimum: config.freeDeliveryMinimum,
+            policies: {
+              returnPolicy: config.returnPolicy,
+              shippingPolicy: config.shippingPolicy,
+              privacyPolicy: config.privacyPolicy,
+            },
+            notifications: {
+              email: config.emailNotifications,
+              sms: config.smsNotifications,
+              push: config.pushNotifications,
+            },
+          },
+        })
 
-      // Guardar configuración
-      localStorage.setItem("storeConfig", JSON.stringify(config))
+        const horariosPayload = Object.keys(config.schedule).map((key) => ({
+          dia_semana: key,
+          hora_apertura: config.schedule[key].isOpen ? config.schedule[key].openTime : null,
+          hora_cierre: config.schedule[key].isOpen ? config.schedule[key].closeTime : null,
+          cerrado: !config.schedule[key].isOpen,
+        }))
+        await storeService.updateHorarios(storeInfo.id, horariosPayload)
+
+        const zonasPayload = (config.deliveryZones || []).map((z) => {
+          const isCircle = z.center && typeof z.radius === 'number'
+          const lat = isCircle ? Number(z.center!.lat) : (z.coordinates?.[0]?.lat ?? 0)
+          const lng = isCircle ? Number(z.center!.lng) : (z.coordinates?.[0]?.lng ?? 0)
+          const zonaCobertura = isCircle
+            ? { center: z.center, radius: z.radius, color: z.color || '#00AEEF' }
+            : { coordinates: z.coordinates || [], color: z.color || '#00AEEF' }
+
+          return {
+            nombre: z.name,
+            precio_envio: z.price,
+            minutos_entrega: parseInt(String(z.estimatedTime).replace(/[^0-9]/g, '')) || 0,
+            latitud: lat,
+            longitud: lng,
+            direccion_completa: z.name,
+            zona_cobertura: JSON.stringify(zonaCobertura),
+            activo: true,
+          }
+        })
+        await storeService.replaceDeliveryZones(storeInfo.id, config.deliveryEnabled ? zonasPayload : [])
+
+        await storeService.setAcceptedPayments(storeInfo.id, config.acceptedPayments || [])
+      }
 
       toast({
         title: "Configuración guardada",
@@ -289,14 +448,9 @@ export default function ConfiguracionTiendaPage() {
                           <SelectValue placeholder="Selecciona una categoría" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="electronics">Electrónicos</SelectItem>
-                          <SelectItem value="clothing">Ropa y Accesorios</SelectItem>
-                          <SelectItem value="food">Comida y Bebidas</SelectItem>
-                          <SelectItem value="home">Hogar y Jardín</SelectItem>
-                          <SelectItem value="sports">Deportes</SelectItem>
-                          <SelectItem value="books">Libros</SelectItem>
-                          <SelectItem value="health">Salud y Belleza</SelectItem>
-                          <SelectItem value="automotive">Automotriz</SelectItem>
+                          {categories.map((c) => (
+                            <SelectItem key={c.id} value={c.nombre}>{c.nombre}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -315,21 +469,27 @@ export default function ConfiguracionTiendaPage() {
 
                   <div className="grid md:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                      <Label htmlFor="logo">URL del Logo</Label>
+                      <Label htmlFor="logo">Logo</Label>
                       <Input
                         id="logo"
-                        value={config.logo}
-                        onChange={(e) => setConfig((prev) => ({ ...prev, logo: e.target.value }))}
-                        placeholder="https://ejemplo.com/logo.png"
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null
+                          setConfig((prev) => ({ ...prev, logoFile: file }))
+                        }}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="banner">URL del Banner</Label>
+                      <Label htmlFor="banner">Banner</Label>
                       <Input
                         id="banner"
-                        value={config.banner}
-                        onChange={(e) => setConfig((prev) => ({ ...prev, banner: e.target.value }))}
-                        placeholder="https://ejemplo.com/banner.jpg"
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null
+                          setConfig((prev) => ({ ...prev, bannerFile: file }))
+                        }}
                       />
                     </div>
                   </div>
@@ -517,7 +677,7 @@ export default function ConfiguracionTiendaPage() {
 
                   <div className="space-y-2">
                     <Label>Ubicación en el mapa</Label>
-                    <MapSelector
+                    <MapSelectorLeaflet
                       onLocationSelect={(coordinates) => setConfig((prev) => ({ ...prev, coordinates }))}
                       initialLocation={config.coordinates}
                     />
@@ -535,24 +695,45 @@ export default function ConfiguracionTiendaPage() {
                     Métodos de Pago
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <Label>Métodos de pago aceptados</Label>
+              <CardContent>
+                <div className="space-y-4">
+                  <Label>Métodos de pago aceptados</Label>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {paymentMethods.map((method) => (
+                      <div key={method.id} className="flex items-center space-x-2">
+                        <Switch
+                          checked={config.acceptedPayments.includes(method.id)}
+                          onCheckedChange={() => togglePaymentMethod(method.id)}
+                        />
+                        <Label>{method.label}</Label>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-4 space-y-3">
+                    <Label className="text-base">Cuenta bancaria para transferencias</Label>
                     <div className="grid md:grid-cols-2 gap-4">
-                      {paymentMethods.map((method) => (
-                        <div key={method.id} className="flex items-center space-x-2">
-                          <Switch
-                            checked={config.acceptedPayments.includes(method.id)}
-                            onCheckedChange={() => togglePaymentMethod(method.id)}
-                          />
-                          <Label>{method.label}</Label>
-                        </div>
-                      ))}
+                      <div className="space-y-2">
+                        <Label htmlFor="bankName">Banco</Label>
+                        <Input id="bankName" value={config.bankName} onChange={(e) => setConfig((prev) => ({ ...prev, bankName: e.target.value }))} placeholder="Nombre del banco" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bankAccountNumber">Número de cuenta</Label>
+                        <Input id="bankAccountNumber" value={config.bankAccountNumber} onChange={(e) => setConfig((prev) => ({ ...prev, bankAccountNumber: e.target.value }))} placeholder="000-0000000-0" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bankAccountHolder">Titular</Label>
+                        <Input id="bankAccountHolder" value={config.bankAccountHolder} onChange={(e) => setConfig((prev) => ({ ...prev, bankAccountHolder: e.target.value }))} placeholder="Nombre del titular" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bankAccountType">Tipo de cuenta</Label>
+                        <Input id="bankAccountType" value={config.bankAccountType} onChange={(e) => setConfig((prev) => ({ ...prev, bankAccountType: e.target.value }))} placeholder="Corriente / Ahorros" />
+                      </div>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
             {/* Políticas */}
             <TabsContent value="politicas">
@@ -608,7 +789,7 @@ export default function ConfiguracionTiendaPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    {/* <div className="flex items-center justify-between">
                       <div>
                         <Label>Notificaciones por email</Label>
                         <p className="text-sm text-muted-foreground">Recibe notificaciones de pedidos por email</p>
@@ -617,9 +798,9 @@ export default function ConfiguracionTiendaPage() {
                         checked={config.emailNotifications}
                         onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, emailNotifications: checked }))}
                       />
-                    </div>
+                    </div> */}
 
-                    <div className="flex items-center justify-between">
+                    {/* <div className="flex items-center justify-between">
                       <div>
                         <Label>Notificaciones por SMS</Label>
                         <p className="text-sm text-muted-foreground">Recibe notificaciones de pedidos por SMS</p>
@@ -628,7 +809,7 @@ export default function ConfiguracionTiendaPage() {
                         checked={config.smsNotifications}
                         onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, smsNotifications: checked }))}
                       />
-                    </div>
+                    </div> */}
 
                     <div className="flex items-center justify-between">
                       <div>

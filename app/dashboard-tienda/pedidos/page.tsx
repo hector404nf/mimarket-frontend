@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Search, Filter, Download, Eye, Package, Truck, CheckCircle } from "lucide-react"
+import { formatearPrecioParaguayo } from "@/lib/utils"
 import Navbar from "@/components/navbar"
 import Footer from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -222,7 +223,7 @@ export default function PedidosTiendaPage() {
                             <span className="font-medium">Fecha:</span> {new Date(pedido.created_at).toLocaleDateString()}
                           </div>
                           <div>
-                            <span className="font-medium">Total:</span> ${Number(pedido.total).toFixed(2)}
+                            <span className="font-medium">Total:</span> {formatearPrecioParaguayo(Number(pedido.total))}
                           </div>
                         </div>
 
@@ -231,8 +232,7 @@ export default function PedidosTiendaPage() {
                           <ul className="text-sm text-muted-foreground">
                             {(pedido.detalles || []).map((detalle, index) => (
                               <li key={index}>
-                                {detalle.cantidad}x {detalle.producto?.nombre || `Producto ${detalle.id_producto}`} - $
-                                {Number(detalle.precio_unitario ?? detalle.producto?.precio ?? 0).toFixed(2)}
+                                {detalle.cantidad}x {detalle.producto?.nombre || `Producto ${detalle.id_producto}`} - {formatearPrecioParaguayo(Number(detalle.precio_unitario ?? detalle.producto?.precio ?? 0))}
                               </li>
                             ))}
                           </ul>
